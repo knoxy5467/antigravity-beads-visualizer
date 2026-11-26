@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildEpicTree, computeCompletion, formatQuotePayload } from '../../src/core/graph.mjs';
+import { buildEpicTree, computeCompletion, formatQuotePayload, type BeadIssue } from '../../src/core/graph.js';
 
-const SAMPLE_ISSUES = [
+const SAMPLE_ISSUES: BeadIssue[] = [
   {
     id: 'bv-meta-1',
     title: 'Meta Epic',

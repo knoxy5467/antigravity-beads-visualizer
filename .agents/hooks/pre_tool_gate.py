@@ -28,6 +28,8 @@ FILE_MUTATION_TOOLS = frozenset(
 NEW_FILE_TOOLS = frozenset({"write_file", "write_to_file"})
 SCRY_REQUIRED_PREFIXES = ("src/", "tools/", "docs/", "sidecars/")
 SCRY_REQUIRED_SUFFIXES = frozenset({".py", ".js", ".mjs", ".ts", ".md"})
+TS_ONLY_PREFIXES = ("src/", "sidecars/", "tests/unit/", "tests/e2e/")
+FORBIDDEN_PROJECT_SUFFIXES = frozenset({".py", ".js", ".mjs"})
 
 BD_EDIT_RE = re.compile(r"\bbd(?:\.exe)?\s+edit\b", re.IGNORECASE)
 BD_DOCTOR_RE = re.compile(r"\bbd(?:\.exe)?\s+doctor\b", re.IGNORECASE)
@@ -99,6 +101,12 @@ def evaluate_pre_tool(payload: dict[str, Any], repo_root: Path = REPO_ROOT) -> d
         return _deny("Replace placeholder Scry IDs with a real ID from scry_mint.")
 
     rel_path = relative_repo_posix(target_path, repo_root=repo_root)
+    if rel_path and rel_path.startswith(TS_ONLY_PREFIXES):
+        if Path(rel_path).suffix.lower() in FORBIDDEN_PROJECT_SUFFIXES:
+            return _deny(
+                "Project files under src/, sidecars/, tests/unit/, and tests/e2e/ "
+                "must use TypeScript (.ts). Python is for hooks only."
+            )
     if rel_path and _needs_scry_entry(tool_name, tool_args, rel_path, repo_root):
         if "@scry.entry" not in content:
             return _deny("Add a minted @scry.entry marker to new files under src/, tools/, docs/, or sidecars/.")

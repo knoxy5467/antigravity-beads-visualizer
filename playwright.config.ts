@@ -12,7 +12,7 @@ export default defineConfig({
     video: 'on',
   },
   webServer: {
-    command: 'node src/standalone/server.mjs',
+    command: 'node dist/src/standalone/server.js',
     url: 'http://127.0.0.1:4173/api/health',
     reuseExistingServer: false,
     env: {
