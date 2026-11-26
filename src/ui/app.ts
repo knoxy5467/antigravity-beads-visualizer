@@ -50,6 +50,16 @@ function setActionStatus(text: string): void {
   if (statusEl) statusEl.textContent = text;
 }
 
+function renderLoadError(message: string): void {
+  const panel = document.getElementById(`view-${activeTab}`);
+  if (!panel) return;
+  const box = document.createElement('div');
+  box.className = 'bv-load-error';
+  box.dataset.testid = 'bv-load-error';
+  box.textContent = message;
+  panel.replaceChildren(box);
+}
+
 async function handleQuote(issue: BeadIssue): Promise<void> {
   const previewEl = document.getElementById('quote-preview');
   const payload = await bridge.quoteBead(issue);
@@ -194,6 +204,7 @@ async function loadWorkspaces(): Promise<void> {
 async function refreshSnapshot(forceFull = false): Promise<void> {
   const badgeEl = document.querySelector('[data-testid="bv-workspace-badge"]');
   const bannerEl = document.querySelector('[data-testid="bv-env-banner"]');
+  const statusEl = document.getElementById('action-status');
   try {
     const etag = forceFull ? undefined : currentSnapshot?.etag;
     const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
@@ -204,6 +215,9 @@ async function refreshSnapshot(forceFull = false): Promise<void> {
     if (bannerEl) {
       bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';
     }
+    if (statusEl?.textContent?.startsWith('Snapshot load failed:')) {
+      setActionStatus('');
+    }
 
     if (selectedIssue) {
       const updated = data.issues.find((item) => item.id === selectedIssue?.id);
@@ -211,7 +225,14 @@ async function refreshSnapshot(forceFull = false): Promise<void> {
     }
     renderAllViews();
   } catch (err) {
-    setActionStatus(`Snapshot load failed: ${err instanceof Error ? err.message : String(err)}`);
+    const message = err instanceof Error ? err.message : String(err);
+    setActionStatus(`Snapshot load failed: ${message}`);
+    if (badgeEl && (!currentSnapshot || badgeEl.textContent === 'loading...')) {
+      badgeEl.textContent = selectedWorkspace || 'unavailable';
+    }
+    if (!currentSnapshot) {
+      renderLoadError(message);
+    }
   }
 }
 
@@ -262,6 +283,8 @@ function bindEvents(): void {
   const workspaceSelect = document.getElementById('workspace-select') as HTMLSelectElement | null;
   workspaceSelect?.addEventListener('change', () => {
     selectedWorkspace = workspaceSelect.value;
+    currentSnapshot = null;
+    selectedIssue = null;
     void refreshSnapshot(true);
   });
 

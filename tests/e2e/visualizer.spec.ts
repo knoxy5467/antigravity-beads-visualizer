@@ -115,4 +115,31 @@ test.describe('Beads Visualizer 4-Tab Prototype', () => {
 
     await page.screenshot({ path: 'test-results/pr-media/synthetic-gates.png', fullPage: true });
   });
+
+  test('displays actionable snapshot errors and clears them after a successful refresh', async ({ page }) => {
+    let failOnce = true;
+    await page.route('**/api/snapshot*', async (route) => {
+      if (failOnce) {
+        failOnce = false;
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'Dolt server is not reachable at 127.0.0.1:3307. Start it with "bd dolt start" and click Refresh.',
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto('/');
+
+    await expect(page.getByTestId('bv-action-status')).toContainText('Dolt server is not reachable at 127.0.0.1:3307');
+    await expect(page.getByTestId('bv-load-error')).toContainText('Dolt server is not reachable at 127.0.0.1:3307');
+
+    await page.getByTestId('refresh-btn').click();
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+    await expect(page.getByTestId('bv-action-status')).toHaveText('');
+  });
 });

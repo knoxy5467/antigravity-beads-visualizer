@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -126,4 +126,46 @@ test('bundled MCP stdio binary emits only valid JSON-RPC on stdout during initia
   }
   const parsed = JSON.parse(responseLine) as { result?: { serverInfo?: { name?: string } } };
   assert.equal(parsed.result?.serverInfo?.name, 'beads-visualizer');
+});
+
+test('createBeadsMcpServer catches bd failures and returns clean isError messages without Command failed', async () => {
+  const emptyWs = mkdtempSync(join(tmpdir(), 'bv-mcp-empty-'));
+  mkdirSync(join(emptyWs, '.beads'), { recursive: true });
+  const prevWorkspaces = process.env.BEADS_WORKSPACES;
+  const prevFixture = process.env.BEADS_FIXTURE_PATH;
+  delete process.env.BEADS_FIXTURE_PATH;
+  process.env.BEADS_WORKSPACES = emptyWs;
+
+  const server = createBeadsMcpServer({ cwd: emptyWs });
+  const client = new Client({ name: 'test-error-client', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    const snapResult = await client.callTool({
+      name: 'beads_get_snapshot',
+      arguments: { workspace: emptyWs },
+    });
+    assert.equal(snapResult.isError, true);
+    const content = snapResult.content as Array<{ type: string; text?: string }>;
+    const msg = content.find((item) => item.type === 'text')?.text ?? '';
+    assert.ok(msg.length > 0);
+    assert.doesNotMatch(msg, /Command failed:/);
+
+    const openResult = await client.callTool({
+      name: 'beads_open_visualizer',
+      arguments: { workspace: emptyWs },
+    });
+    assert.equal(openResult.isError, true);
+    const openContent = openResult.content as Array<{ type: string; text?: string }>;
+    const openMsg = openContent.find((item) => item.type === 'text')?.text ?? '';
+    assert.ok(openMsg.length > 0);
+    assert.doesNotMatch(openMsg, /Command failed:/);
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+    if (prevWorkspaces === undefined) delete process.env.BEADS_WORKSPACES;
+    else process.env.BEADS_WORKSPACES = prevWorkspaces;
+    if (prevFixture !== undefined) process.env.BEADS_FIXTURE_PATH = prevFixture;
+    rmSync(emptyWs, { recursive: true, force: true });
+  }
 });

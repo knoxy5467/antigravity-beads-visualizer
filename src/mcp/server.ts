@@ -23,6 +23,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import {
+  formatBdCommandError,
   isValidBeadId,
   listBeadsWorkspaces,
   loadBeadsSnapshot,
@@ -68,6 +69,12 @@ function errorResult(message: string) {
     isError: true,
     content: [{ type: 'text' as const, text: message }],
   };
+}
+
+function handleToolError(toolName: string, err: unknown) {
+  const message = formatBdCommandError(err);
+  process.stderr.write(`[beads-visualizer] ${toolName} failed: ${message}\n`);
+  return errorResult(message);
 }
 
 /**
@@ -132,28 +139,32 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
       },
     },
     async (args) => {
-      const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
-      if (validatedWorkspace === null) {
-        return errorResult('Workspace is not in allowed Beads workspaces.');
+      try {
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const snapshot = await loadBeadsSnapshot({ ...options, cwd: validatedWorkspace });
+        const summary = [
+          `Workspace: ${snapshot.workspace}`,
+          `Total: ${snapshot.stats.total_issues}`,
+          `Ready: ${snapshot.stats.ready_issues}`,
+          `In Progress: ${snapshot.stats.in_progress_issues}`,
+          `Blocked: ${snapshot.stats.blocked_issues}`,
+          `Closed: ${snapshot.stats.closed_issues}`,
+        ].join(' | ');
+        return {
+          content: [{ type: 'text' as const, text: summary }],
+          structuredContent: {
+            workspace: snapshot.workspace,
+            stats: snapshot.stats,
+            testEnv: snapshot.testEnv,
+            tab: args.tab ?? 'tree',
+          },
+        };
+      } catch (err) {
+        return handleToolError('beads_open_visualizer', err);
       }
-      const snapshot = await loadBeadsSnapshot({ ...options, cwd: validatedWorkspace });
-      const summary = [
-        `Workspace: ${snapshot.workspace}`,
-        `Total: ${snapshot.stats.total_issues}`,
-        `Ready: ${snapshot.stats.ready_issues}`,
-        `In Progress: ${snapshot.stats.in_progress_issues}`,
-        `Blocked: ${snapshot.stats.blocked_issues}`,
-        `Closed: ${snapshot.stats.closed_issues}`,
-      ].join(' | ');
-      return {
-        content: [{ type: 'text' as const, text: summary }],
-        structuredContent: {
-          workspace: snapshot.workspace,
-          stats: snapshot.stats,
-          testEnv: snapshot.testEnv,
-          tab: args.tab ?? 'tree',
-        },
-      };
     }
   );
 
@@ -196,22 +207,26 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
       },
     },
     async (args) => {
-      const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
-      if (validatedWorkspace === null) {
-        return errorResult('Workspace is not in allowed Beads workspaces.');
-      }
-      const snapshot = await loadBeadsSnapshot({ ...options, cwd: validatedWorkspace });
-      if (args.etag && args.etag === snapshot.etag) {
-        const unchanged = { unchanged: true, etag: snapshot.etag };
+      try {
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const snapshot = await loadBeadsSnapshot({ ...options, cwd: validatedWorkspace });
+        if (args.etag && args.etag === snapshot.etag) {
+          const unchanged = { unchanged: true, etag: snapshot.etag };
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(unchanged) }],
+            structuredContent: unchanged,
+          };
+        }
         return {
-          content: [{ type: 'text' as const, text: JSON.stringify(unchanged) }],
-          structuredContent: unchanged,
+          content: [{ type: 'text' as const, text: JSON.stringify(snapshot) }],
+          structuredContent: snapshot as unknown as Record<string, unknown>,
         };
+      } catch (err) {
+        return handleToolError('beads_get_snapshot', err);
       }
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(snapshot) }],
-        structuredContent: snapshot as unknown as Record<string, unknown>,
-      };
     }
   );
 
@@ -232,19 +247,23 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
       },
     },
     async (args) => {
-      if (!isValidBeadId(args.id)) {
-        return errorResult('Invalid or missing id parameter.');
+      try {
+        if (!isValidBeadId(args.id)) {
+          return errorResult('Invalid or missing id parameter.');
+        }
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const comments = await loadIssueComments(args.id, { ...options, cwd: validatedWorkspace });
+        const payload = { id: args.id, comments };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return handleToolError('beads_get_issue_comments', err);
       }
-      const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
-      if (validatedWorkspace === null) {
-        return errorResult('Workspace is not in allowed Beads workspaces.');
-      }
-      const comments = await loadIssueComments(args.id, { ...options, cwd: validatedWorkspace });
-      const payload = { id: args.id, comments };
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
-        structuredContent: payload,
-      };
     }
   );
 
