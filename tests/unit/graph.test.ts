@@ -54,3 +54,18 @@ test('formatQuotePayload builds clean context snippet', () => {
   assert.match(text, /bv-task-1/);
   assert.match(text, /Leaf Task/);
 });
+
+test('buildEpicTree merges and deduplicates blocked_by and blocks edges', () => {
+  const { roots } = buildEpicTree([
+    {
+      id: 'bv-x',
+      title: 'Blocked Node',
+      blocked_by: ['bv-b1'],
+      dependencies: [
+        { depends_on_id: 'bv-b1', type: 'blocks' },
+        { depends_on_id: 'bv-b2', type: 'blocks' },
+      ],
+    },
+  ]);
+  assert.deepEqual(roots[0].blockedBy, ['bv-b1', 'bv-b2']);
+});

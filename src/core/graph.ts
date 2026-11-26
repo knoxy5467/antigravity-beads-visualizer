@@ -16,9 +16,12 @@
 // @scry.entry.end
 
 export interface BeadDependency {
+  issue_id?: string;
   depends_on_id?: string;
   target?: string;
   type?: string;
+  created_at?: string;
+  created_by?: string;
 }
 
 export interface BeadComment {
@@ -34,12 +37,34 @@ export interface BeadIssue {
   status?: string;
   priority?: number;
   assignee?: string;
+  parent?: string;
   description?: string;
   acceptance?: string;
+  acceptance_criteria?: string;
   design?: string;
   notes?: string;
   dependencies?: BeadDependency[];
   comments?: BeadComment[];
+  blocked_by?: string[];
+}
+
+export interface BeadBlockedEntry {
+  id: string;
+  title: string;
+  status: string;
+  priority: number;
+  issue_type: string;
+  blocked_by_count: number;
+  blocked_by: string[];
+}
+
+export interface BeadStatsSummary {
+  total_issues: number;
+  open_issues: number;
+  in_progress_issues: number;
+  blocked_issues: number;
+  closed_issues: number;
+  ready_issues: number;
 }
 
 export interface BeadTreeNode extends BeadIssue {
@@ -58,6 +83,8 @@ export interface BeadSnapshot {
   testEnv: string;
   workspace: string;
   issues: BeadIssue[];
+  blocked: BeadBlockedEntry[];
+  stats: BeadStatsSummary;
   etag: string;
 }
 
@@ -74,7 +101,7 @@ export function buildEpicTree(issues: BeadIssue[]): { roots: BeadTreeNode[]; edg
   const edges: BeadEdge[] = [];
 
   for (const issue of issues) {
-    byId.set(issue.id, { ...issue, depth: 0, children: [], blockedBy: [] });
+    byId.set(issue.id, { ...issue, depth: 0, children: [], blockedBy: [...(issue.blocked_by ?? [])] });
   }
 
   const hasParent = new Set<string>();
@@ -93,7 +120,7 @@ export function buildEpicTree(issues: BeadIssue[]): { roots: BeadTreeNode[]; edg
           parent.children.push(node);
           hasParent.add(issue.id);
         }
-      } else if (depType === 'blocks') {
+      } else if (depType === 'blocks' && !node.blockedBy.includes(targetId)) {
         node.blockedBy.push(targetId);
       }
     }
