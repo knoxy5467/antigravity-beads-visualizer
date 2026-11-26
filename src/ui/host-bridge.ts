@@ -16,6 +16,11 @@
 // @scry.entry.end
 
 import {
+  App,
+  applyDocumentTheme,
+  applyHostStyleVariables,
+} from '@modelcontextprotocol/ext-apps';
+import {
   formatQuotePayload,
   type BeadComment,
   type BeadIssue,
@@ -35,10 +40,127 @@ export interface HostBridge {
   sendAgentMessage(text: string, target?: 'current' | 'new'): Promise<string>;
 }
 
+function isEmbeddedFrame(): boolean {
+  try {
+    return typeof window !== 'undefined' && window.parent !== window;
+  } catch {
+    return false;
+  }
+}
+
+function parseToolPayload<T>(result: {
+  structuredContent?: unknown;
+  content?: Array<{ type: string; text?: string }>;
+}): T {
+  if (result.structuredContent !== undefined) {
+    return result.structuredContent as T;
+  }
+  const firstText = result.content?.find((item) => item.type === 'text')?.text;
+  if (firstText) {
+    return JSON.parse(firstText) as T;
+  }
+  return {} as T;
+}
+
+function createEmbeddedMcpBridge(): HostBridge {
+  let appPromise: Promise<App> | null = null;
+
+  function getApp(): Promise<App> {
+    if (!appPromise) {
+      const app = new App({ name: 'Beads Visualizer', version: '0.1.0' }, {});
+      app.onhostcontextchanged = (ctx) => {
+        if (ctx.theme) applyDocumentTheme(ctx.theme);
+        if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+      };
+      appPromise = app.connect().then(() => {
+        const ctx = app.getHostContext();
+        if (ctx?.theme) applyDocumentTheme(ctx.theme);
+        if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+        return app;
+      });
+    }
+    return appPromise;
+  }
+
+  return {
+    isEmbedded(): boolean {
+      return true;
+    },
+
+    async fetchWorkspaces(): Promise<string[]> {
+      const app = await getApp();
+      const result = await app.callServerTool({
+        name: 'beads_list_workspaces',
+        arguments: {},
+      });
+      const data = parseToolPayload<{ workspaces?: string[] }>(result);
+      return Array.isArray(data.workspaces) ? data.workspaces : [];
+    },
+
+    async fetchSnapshot(etag?: string, workspace?: string): Promise<SnapshotResponse> {
+      const app = await getApp();
+      const args: Record<string, unknown> = {};
+      if (etag) args.etag = etag;
+      if (workspace) args.workspace = workspace;
+      const result = await app.callServerTool({
+        name: 'beads_get_snapshot',
+        arguments: args,
+      });
+      return parseToolPayload<SnapshotResponse>(result);
+    },
+
+    async fetchIssueComments(id: string, workspace?: string): Promise<BeadComment[]> {
+      const app = await getApp();
+      const args: Record<string, unknown> = { id };
+      if (workspace) args.workspace = workspace;
+      const result = await app.callServerTool({
+        name: 'beads_get_issue_comments',
+        arguments: args,
+      });
+      const data = parseToolPayload<{ comments?: BeadComment[] }>(result);
+      return Array.isArray(data.comments) ? data.comments : [];
+    },
+
+    async quoteBead(issue: BeadIssue): Promise<string> {
+      const payload = formatQuotePayload(issue);
+      const app = await getApp();
+      const caps = app.getHostCapabilities();
+      if (caps?.updateModelContext) {
+        await app.updateModelContext({
+          content: [{ type: 'text', text: payload }],
+        });
+      }
+      return payload;
+    },
+
+    async sendAgentMessage(text: string, target: 'current' | 'new' = 'current'): Promise<string> {
+      const app = await getApp();
+      const caps = app.getHostCapabilities();
+      if (!caps?.message) {
+        return 'Host surface does not support conversation messages.';
+      }
+      await app.sendMessage({
+        role: 'user',
+        content: [{ type: 'text', text }],
+        ...(target === 'new'
+          ? { _meta: { 'com.google.antigravity/message': { target: 'new' } } }
+          : {}),
+      });
+      return target === 'new'
+        ? `Started new conversation with message: ${text}`
+        : `Sent message to conversation: ${text}`;
+    },
+  };
+}
+
 /**
- * Create a standalone HTTP host bridge backed by the local server API.
+ * Create a standalone HTTP host bridge or embedded MCP App host bridge.
  */
 export function createHostBridge(): HostBridge {
+  if (isEmbeddedFrame()) {
+    return createEmbeddedMcpBridge();
+  }
+
   return {
     isEmbedded(): boolean {
       return false;

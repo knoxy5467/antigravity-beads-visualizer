@@ -194,21 +194,25 @@ async function loadWorkspaces(): Promise<void> {
 async function refreshSnapshot(forceFull = false): Promise<void> {
   const badgeEl = document.querySelector('[data-testid="bv-workspace-badge"]');
   const bannerEl = document.querySelector('[data-testid="bv-env-banner"]');
-  const etag = forceFull ? undefined : currentSnapshot?.etag;
-  const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
-  if (data.unchanged) return;
+  try {
+    const etag = forceFull ? undefined : currentSnapshot?.etag;
+    const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
+    if (data.unchanged) return;
 
-  currentSnapshot = data;
-  if (badgeEl) badgeEl.textContent = data.workspace;
-  if (bannerEl) {
-    bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';
-  }
+    currentSnapshot = data;
+    if (badgeEl) badgeEl.textContent = data.workspace;
+    if (bannerEl) {
+      bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';
+    }
 
-  if (selectedIssue) {
-    const updated = data.issues.find((item) => item.id === selectedIssue?.id);
-    if (updated) selectedIssue = updated;
+    if (selectedIssue) {
+      const updated = data.issues.find((item) => item.id === selectedIssue?.id);
+      if (updated) selectedIssue = updated;
+    }
+    renderAllViews();
+  } catch (err) {
+    setActionStatus(`Snapshot load failed: ${err instanceof Error ? err.message : String(err)}`);
   }
-  renderAllViews();
 }
 
 function updateAutoPoll(enabled: boolean): void {
