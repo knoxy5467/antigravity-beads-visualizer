@@ -9,6 +9,7 @@ __pycache__/
 
 # Node and Playwright
 node_modules/
+dist/
 test-results/
 playwright-report/
 blob-report/

@@ -2,52 +2,64 @@
 // id: src.standalone-server~252067f3
 // kind: code
 // summary: >-
-//   Serve the standalone Beads Visualizer UI and read-only snapshot API.
-//   Also: standalone, server, fixture, bd-readonly, etag, health
+//   Serve the standalone Beads Visualizer UI and read-only snapshot API in TypeScript.
+//   Also: standalone, server, fixture, bd-readonly, etag, health, typescript
 // status: active
 // weight: 0.8
-// tags: ["topic:server", "server", "scope:src", "src", "standalone", "beads"]
+// tags: ["topic:server", "server", "scope:src", "src", "standalone", "beads", "typescript"]
 // rationale: >-
 //   Provides an isolated HTTP server for synthetic Playwright tests and local standalone viewing.
 // applies: serving standalone UI, loading synthetic fixtures, querying read-only bd JSON
 // seeded_questions:
 //   - "How does standalone server load synthetic fixtures vs live bd data?"
-//   - "src/standalone/server.mjs loadBeadsSnapshot"
+//   - "src/standalone/server.ts loadBeadsSnapshot"
 // @scry.entry.end
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import http from 'node:http';
+import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import type { BeadIssue, BeadSnapshot } from '../core/graph.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(__dirname, '..', '..');
+const REPO_ROOT = __dirname.includes(`${join('dist', 'src')}`)
+  ? resolve(__dirname, '..', '..', '..')
+  : resolve(__dirname, '..', '..');
 
-const STATIC_ROUTES = {
+interface StaticAsset {
+  file: string;
+  type: string;
+}
+
+const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/': { file: join(REPO_ROOT, 'src', 'ui', 'index.html'), type: 'text/html; charset=utf-8' },
   '/index.html': { file: join(REPO_ROOT, 'src', 'ui', 'index.html'), type: 'text/html; charset=utf-8' },
-  '/styles.css': { file: join(REPO_ROOT, 'src', 'ui', 'styles.css'), type: 'text/css; charset=utf-8' },
-  '/app.js': { file: join(REPO_ROOT, 'src', 'ui', 'app.js'), type: 'application/javascript; charset=utf-8' },
-  '/core/graph.mjs': { file: join(REPO_ROOT, 'src', 'core', 'graph.mjs'), type: 'application/javascript; charset=utf-8' },
+  '/ui/styles.css': { file: join(REPO_ROOT, 'src', 'ui', 'styles.css'), type: 'text/css; charset=utf-8' },
+  '/ui/app.js': { file: join(REPO_ROOT, 'dist', 'src', 'ui', 'app.js'), type: 'application/javascript; charset=utf-8' },
+  '/core/graph.js': { file: join(REPO_ROOT, 'dist', 'src', 'core', 'graph.js'), type: 'application/javascript; charset=utf-8' },
 };
+
+export interface SnapshotOptions {
+  fixturePath?: string;
+  testEnv?: string;
+  cwd?: string;
+}
 
 /**
  * Load a read-only Beads snapshot from a synthetic fixture or live bd CLI.
- * @param {{fixturePath?: string, testEnv?: string, cwd?: string}} [options]
- * @returns {Promise<{testEnv: string, workspace: string, issues: Array<object>, etag: string}>}
  */
-export async function loadBeadsSnapshot(options = {}) {
+export async function loadBeadsSnapshot(options: SnapshotOptions = {}): Promise<BeadSnapshot> {
   const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH ?? '';
   const testEnv = options.testEnv ?? process.env.BEADS_TEST_ENV ?? 'live';
 
   if (fixturePath) {
     const absPath = resolve(REPO_ROOT, fixturePath);
     const raw = await readFile(absPath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as { workspace?: string; issues?: BeadIssue[] };
     const issues = Array.isArray(parsed.issues) ? parsed.issues : [];
     const etag = createHash('sha256').update(raw).digest('hex').slice(0, 16);
     return {
@@ -61,22 +73,22 @@ export async function loadBeadsSnapshot(options = {}) {
   const cwd = options.cwd ?? REPO_ROOT;
   const bdExe = process.env.BD_PATH || 'bd';
   const { stdout } = await execFileAsync(bdExe, ['list', '--json'], { cwd, timeout: 8000 });
-  const issues = JSON.parse(stdout || '[]');
+  const parsedIssues = JSON.parse(stdout || '[]') as unknown;
+  const issues = Array.isArray(parsedIssues) ? (parsedIssues as BeadIssue[]) : [];
   const etag = createHash('sha256').update(stdout || '[]').digest('hex').slice(0, 16);
   return {
     testEnv,
     workspace: 'local-workspace',
-    issues: Array.isArray(issues) ? issues : [],
+    issues,
     etag,
   };
 }
 
 /**
  * Create the standalone HTTP server instance.
- * @returns {http.Server}
  */
-export function createStandaloneServer() {
-  return http.createServer(async (req, res) => {
+export function createStandaloneServer(): http.Server {
+  return http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const urlPath = (req.url || '/').split('?')[0];
     if (urlPath === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });

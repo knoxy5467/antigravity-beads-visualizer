@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { loadBeadsSnapshot } from '../../src/standalone/server.mjs';
+import { loadBeadsSnapshot } from '../../src/standalone/server.js';
 
 test('loadBeadsSnapshot reads synthetic fixture without invoking bd CLI', async () => {
   const snap = await loadBeadsSnapshot({

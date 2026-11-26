@@ -41,6 +41,10 @@ jobs:
         run: ruff check tools/ tests/python/ .agents/hooks/
       - name: Run Python unit tests
         run: python -m pytest tests/python/
+      - name: Run TypeScript typecheck and build
+        run: |
+          npm run typecheck
+          npm run build
       - name: Run Node unit tests
         run: npm run test:unit
       - name: Run PII guard on repository fixtures and docs

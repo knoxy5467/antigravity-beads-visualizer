@@ -17,8 +17,9 @@ Follow this workflow for all changes in the Antigravity Beads Visualizer reposit
 1. Claim one active Bead with `bd update <id> --claim --json`.
 2. Create branch `bead/<id>` from `main`.
 3. Write failing tests first (`tests/python/`, `tests/unit/`, or `tests/e2e/`). Confirm they fail.
-4. Implement minimal code to pass. Add minted `@scry.entry` markers on new `src/`, `tools/`, `docs/`, and `sidecars/` files.
-5. Run `python -m tools.sdlc_gate green-bar` and `npm run test:e2e`.
+4. Write all project code and project tests in strict TypeScript (`.ts`). Restrict Python to hooks only.
+5. Implement minimal code to pass. Add minted `@scry.entry` markers on new `src/`, `tools/`, `docs/`, and `sidecars/` files.
+6. Run `npm run typecheck`, `python -m tools.sdlc_gate green-bar`, and `npm run test:e2e`.
 6. Run `python -m tools.pii_guard tests/ test-results/ docs/` to confirm zero local PII leaks.
 7. Run code review before opening a pull request.
 8. Include `Beads-Issue: <id>` in every commit and pull request.

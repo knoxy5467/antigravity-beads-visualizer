@@ -68,6 +68,8 @@ MERGE_COMMIT_RE = re.compile(r"^(?:Merge (?:branch|remote-tracking branch|pull r
 
 PROD_CODE_PREFIXES = ("src/", "tools/", "sidecars/")
 PROD_CODE_SUFFIXES = frozenset({".py", ".js", ".mjs", ".ts", ".html", ".css"})
+TS_ONLY_DIRS = ("src", "sidecars", "tests/unit", "tests/e2e")
+FORBIDDEN_PROJECT_SUFFIXES = frozenset({".py", ".js", ".mjs"})
 UI_PATH_PREFIXES = ("src/ui/", "sidecars/")
 UI_PATH_SUFFIXES = frozenset({".html", ".css", ".jsx", ".tsx"})
 UI_MEDIA_RE = re.compile(
@@ -178,6 +180,23 @@ def check_no_push_to_main(
     if branch in PROTECTED_BRANCHES:
         return {"name": "no_push_to_main", "ok": False, "detail": blocked}
     return {"name": "no_push_to_main", "ok": True, "detail": branch or "detached"}
+
+
+def check_language_policy(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
+    """Verify project directories contain zero .py, .js, or .mjs files."""
+    violations: list[str] = []
+    for rel_dir in TS_ONLY_DIRS:
+        base = repo_root / rel_dir
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.rglob("*")):
+            if entry.is_file() and entry.suffix.lower() in FORBIDDEN_PROJECT_SUFFIXES:
+                violations.append(entry.relative_to(repo_root).as_posix())
+    return {
+        "name": "language_policy",
+        "ok": len(violations) == 0,
+        "detail": "clean" if not violations else ", ".join(violations),
+    }
 
 
 def check_no_forbidden_tracked(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
@@ -513,6 +532,7 @@ def run_git_pre_commit(repo_root: Path = REPO_ROOT) -> dict[str, Any]:
     checks: list[dict[str, Any]] = [
         check_not_on_main_branch(repo_root=repo_root),
         check_no_forbidden_tracked(repo_root=repo_root),
+        check_language_policy(repo_root=repo_root),
         check_scry_db_hygiene(repo_root=repo_root),
     ]
     ok_st, st_raw = _run_step(["git", "diff", "--cached", "--name-only"], cwd=repo_root, max_lines=None)
@@ -571,6 +591,10 @@ def run_git_pre_push(
         checks.append(check_single_bead_scope(repo_root=repo_root))
     ok_py, py_out = _run_step([py_exe, "-m", "pytest", "tests/python/"], cwd=repo_root)
     checks.append({"name": "pytest", "ok": ok_py, "detail": "passed" if ok_py else py_out})
+    if (repo_root / "tsconfig.json").is_file():
+        npm_exe = shutil.which("npm") or "npm"
+        ok_tc, tc_out = _run_step([npm_exe, "run", "typecheck"], cwd=repo_root)
+        checks.append({"name": "typecheck", "ok": ok_tc, "detail": "passed" if ok_tc else tc_out})
     return {"ok": all(bool(c["ok"]) for c in checks), "checks": checks}
 
 
@@ -585,6 +609,7 @@ def run_pr_gate(
     """Run CI pull request gate for Beads, Scry, TDD, UI evidence, and PII."""
     checks: list[dict[str, Any]] = [
         check_no_forbidden_tracked(repo_root=repo_root),
+        check_language_policy(repo_root=repo_root),
         check_scry_db_hygiene(repo_root=repo_root),
     ]
     scope = check_single_bead_scope(repo_root, base_ref, head_ref, pr_body)
@@ -652,6 +677,7 @@ def run_green_bar(repo_root: Path = REPO_ROOT, skip_bd: bool = False) -> dict[st
     ruff_exe = _venv_tool(repo_root, "ruff")
     checks: list[dict[str, Any]] = [
         check_no_forbidden_tracked(repo_root),
+        check_language_policy(repo_root),
         check_scry_db_hygiene(repo_root),
     ]
     ok_ruff, ruff_out = _run_step([ruff_exe, "check", "tools/", "tests/python/", ".agents/hooks/"], cwd=repo_root)
@@ -659,6 +685,11 @@ def run_green_bar(repo_root: Path = REPO_ROOT, skip_bd: bool = False) -> dict[st
 
     ok_py, py_out = _run_step([py_exe, "-m", "pytest", "tests/python/"], cwd=repo_root)
     checks.append({"name": "pytest", "ok": ok_py, "detail": "passed" if ok_py else py_out})
+
+    if (repo_root / "tsconfig.json").is_file():
+        npm_exe = shutil.which("npm") or "npm"
+        ok_tc, tc_out = _run_step([npm_exe, "run", "typecheck"], cwd=repo_root)
+        checks.append({"name": "typecheck", "ok": ok_tc, "detail": "passed" if ok_tc else tc_out})
 
     if (repo_root / "package.json").is_file():
         npm_exe = shutil.which("npm") or "npm"

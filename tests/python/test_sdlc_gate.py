@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools.sdlc_gate import (
+    check_language_policy,
     check_ui_pr_evidence,
     evaluate_tdd_gate,
     run_git_commit_msg,
@@ -95,3 +96,15 @@ def test_check_ui_pr_evidence_requires_media_and_pii_attestation() -> None:
     )
     valid_ui = check_ui_pr_evidence(["src/ui/app.js"], pr_body=valid_body)
     assert valid_ui["ok"] is True
+
+
+def test_check_language_policy_blocks_non_ts_project_files(tmp_path: Path) -> None:
+    """Verify check_language_policy rejects .py, .js, and .mjs under src/ and tests/unit/."""
+    (tmp_path / "src").mkdir(parents=True)
+    (tmp_path / "src" / "main.ts").write_text("export const x = 1;\n", encoding="utf-8")
+    assert check_language_policy(tmp_path)["ok"] is True
+
+    (tmp_path / "src" / "legacy.mjs").write_text("export const y = 2;\n", encoding="utf-8")
+    res = check_language_policy(tmp_path)
+    assert res["ok"] is False
+    assert "src/legacy.mjs" in res["detail"]

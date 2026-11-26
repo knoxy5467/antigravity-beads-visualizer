@@ -37,12 +37,12 @@ def test_pre_tool_gate_blocks_bd_edit_and_untagged_commits(tmp_path: Path) -> No
 def test_pre_tool_gate_blocks_new_src_file_without_scry_entry(tmp_path: Path) -> None:
     """Verify new files under src/, tools/, or docs/ require @scry.entry."""
     (tmp_path / "src").mkdir()
-    target = tmp_path / "src" / "new_mod.py"
+    target = tmp_path / "src" / "new_mod.ts"
     res = evaluate_pre_tool(
         {
             "toolCall": {
                 "name": "write_file",
-                "args": {"Path": str(target), "Content": "def f():\n    return 1\n"},
+                "args": {"Path": str(target), "Content": "export const f = (): number => 1;\n"},
             }
         },
         repo_root=tmp_path,
@@ -58,3 +58,21 @@ def test_stop_gate_allows_when_continuation_active(tmp_path: Path) -> None:
         repo_root=tmp_path,
     )
     assert res["decision"] == "allow"
+
+
+def test_pre_tool_gate_enforces_typescript_for_project_dirs(tmp_path: Path) -> None:
+    """Verify project directories reject .py, .js, and .mjs files."""
+    (tmp_path / "src").mkdir()
+    for bad_name in ("app.py", "app.js", "app.mjs"):
+        target = tmp_path / "src" / bad_name
+        res = evaluate_pre_tool(
+            {
+                "toolCall": {
+                    "name": "write_file",
+                    "args": {"Path": str(target), "Content": "// @scry.entry\n// @scry.entry.end\n"},
+                }
+            },
+            repo_root=tmp_path,
+        )
+        assert res["decision"] == "deny"
+        assert "TypeScript" in res["reason"]

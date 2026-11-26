@@ -13,6 +13,7 @@ Hard invariants:
 - Never run `bd edit`. Always pass `--yes` to `bd doctor --fix` or `bd doctor --clean`.
 - Never push directly to `main`. Every change enters `main` through a pull request with one `Beads-Issue: <id>`.
 - Follow strict TDD: write failing tests before production code.
+- Use strict TypeScript (`.ts`) for all project code and project tests (`src/`, `sidecars/`, `tests/unit/`, `tests/e2e/`). Restrict Python strictly to hooks (`.agents/hooks/`, `.beads/hooks/`, `tools/`, `tests/python/`).
 - Include synthetic test-environment screenshots or videos in `## UI Evidence` on every UI pull request.
 - Verify zero local PII with `python -m tools.pii_guard` before every commit and pull request.
 
