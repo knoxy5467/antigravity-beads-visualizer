@@ -86,11 +86,14 @@ jobs:
           '
           bd ping
       - name: Discover and evaluate Beads gates
-        if: exists('.beads/dolt/bv/.dolt')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ ! -d .beads/dolt/bv/.dolt ]; then
+            echo "Dolt directory absent; skipping gate evaluation."
+            exit 0
+          fi
           bd gate discover || true
           bd gate check --escalate || true
           bd dolt pull || true

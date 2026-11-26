@@ -52,6 +52,16 @@ export function buildEpicTree(issues) {
       roots.push(byId.get(issue.id));
     }
   }
+
+  function assignDepth(node, depth) {
+    node.depth = depth;
+    for (const child of node.children) {
+      assignDepth(child, depth + 1);
+    }
+  }
+  for (const root of roots) {
+    assignDepth(root, 0);
+  }
   return { roots, edges };
 }
 

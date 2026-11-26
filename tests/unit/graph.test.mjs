@@ -29,13 +29,16 @@ const SAMPLE_ISSUES = [
   },
 ];
 
-test('buildEpicTree nests meta-epic -> sub-epic -> task', () => {
+test('buildEpicTree nests meta-epic -> sub-epic -> task with depth', () => {
   const { roots, edges } = buildEpicTree(SAMPLE_ISSUES);
   assert.equal(roots.length, 1);
   assert.equal(roots[0].id, 'bv-meta-1');
+  assert.equal(roots[0].depth, 0);
   assert.equal(roots[0].children.length, 1);
   assert.equal(roots[0].children[0].id, 'bv-sub-1');
+  assert.equal(roots[0].children[0].depth, 1);
   assert.equal(roots[0].children[0].children[0].id, 'bv-task-1');
+  assert.equal(roots[0].children[0].children[0].depth, 2);
   assert.equal(edges.length, 2);
 });
 

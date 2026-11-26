@@ -22,6 +22,7 @@ blob-report/
 *.scratch.md
 
 # Beads and Dolt runtime files (Dolt data stays on refs/dolt/data)
+.beads.gate.lock
 .dolt/
 .beads/dolt/
 .beads/embeddeddolt/
