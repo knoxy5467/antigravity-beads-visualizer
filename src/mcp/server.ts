@@ -18,7 +18,7 @@
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
@@ -252,7 +252,8 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
 }
 
 const isMainModule =
-  (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) ||
+  (Boolean(process.argv[1]) &&
+    resolve(fileURLToPath(import.meta.url)).toLowerCase() === resolve(process.argv[1]).toLowerCase()) ||
   process.env.BEADS_MCP_STDIO === '1';
 
 if (isMainModule) {
