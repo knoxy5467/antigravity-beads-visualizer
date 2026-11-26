@@ -84,6 +84,7 @@ jobs:
                   time.sleep(0.25)
           sys.exit("Dolt SQL server did not open port 3307")
           '
+          bd migrate schema --force
           bd ping
       - name: Discover and evaluate Beads gates
         env:
