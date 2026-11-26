@@ -1,0 +1,34 @@
+{
+  "formula": "code-review",
+  "description": "Deterministic gate and read-only code review pass for one Bead branch.",
+  "version": 1,
+  "type": "workflow",
+  "phase": "vapor",
+  "vars": {
+    "bead_id": {
+      "description": "Target Bead ID",
+      "required": true
+    },
+    "base_ref": {
+      "description": "Git base ref",
+      "default": "origin/main"
+    },
+    "head_ref": {
+      "description": "Git head ref",
+      "default": "HEAD"
+    }
+  },
+  "steps": [
+    {
+      "id": "deterministic-gate",
+      "title": "Run deterministic checks for {{bead_id}}",
+      "description": "Run ruff, pytest, npm unit tests, Playwright E2E, pii_guard, and scry-hygiene."
+    },
+    {
+      "id": "reviewer-audit",
+      "title": "Run code-reviewer audit on {{base_ref}}..{{head_ref}}",
+      "needs": ["deterministic-gate"],
+      "description": "Invoke code-reviewer to inspect diff, TDD evidence, Scry markers, and UI media."
+    }
+  ]
+}

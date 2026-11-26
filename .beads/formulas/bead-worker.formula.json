@@ -1,0 +1,40 @@
+{
+  "formula": "bead-worker",
+  "description": "Isolated TDD worker flow for one assigned Bead on a dedicated branch.",
+  "version": 1,
+  "type": "workflow",
+  "phase": "vapor",
+  "vars": {
+    "bead_id": {
+      "description": "Assigned Bead ID",
+      "required": true
+    },
+    "branch": {
+      "description": "Target branch name",
+      "required": true
+    },
+    "worktree_path": {
+      "description": "Assigned worktree path",
+      "required": true
+    }
+  },
+  "steps": [
+    {
+      "id": "claim-and-orient",
+      "title": "Claim {{bead_id}} and query Scry",
+      "description": "Run bd update {{bead_id}} --claim and query scry_sql for related entries."
+    },
+    {
+      "id": "write-failing-tests",
+      "title": "Write failing tests for {{bead_id}}",
+      "needs": ["claim-and-orient"],
+      "description": "Add failing Python, Node, or Playwright tests before editing production code."
+    },
+    {
+      "id": "implement-and-verify",
+      "title": "Implement {{bead_id}} on {{branch}} in {{worktree_path}}",
+      "needs": ["write-failing-tests"],
+      "description": "Write minimal code with minted @scry.entry markers and run green-bar."
+    }
+  ]
+}

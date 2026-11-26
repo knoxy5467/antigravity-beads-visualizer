@@ -1,7 +1,42 @@
+# Environments and Secrets
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
 
-# Beads / Dolt files (added by bd init)
+# Node and Playwright
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+
+# Temp and logs
+*.tmp
+*.tmp-*
+*-shm
+*-wal
+*.log
+*.scratch.md
+
+# Beads and Dolt runtime files (Dolt data stays on refs/dolt/data)
 .dolt/
-*.db
-.beads-credential-key
+.beads/dolt/
+.beads/embeddeddolt/
 .beads/proxieddb/
-*.gate.lock*
+.beads/dolt-server.*
+.beads/*.lock
+.beads/.local_version
+.beads/ephemeral.sqlite3*
+.beads/backup/
+.beads-credential-key
+
+# Scry SQLite cache and runtime
+agent/project.db
+agent/project.db-wal
+agent/project.db-shm
+agent/project.db.tmp
+agent/drivers/@local/scry/data/
+agent/drivers/@local/scry/runtime/

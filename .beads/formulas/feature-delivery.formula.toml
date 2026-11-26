@@ -1,0 +1,61 @@
+formula = "feature-delivery"
+description = "Persistent molecule for feature delivery with TDD, Playwright UI evidence, CI, and PR gates."
+version = 1
+type = "workflow"
+phase = "liquid"
+
+[vars.bead_id]
+description = "Target Bead ID"
+required = true
+
+[vars.branch]
+description = "Isolated Git branch name"
+required = true
+
+[vars.pr_number]
+description = "GitHub pull request number"
+default = "0"
+
+[[steps]]
+id = "design"
+title = "Orient with Scry and plan {{bead_id}}"
+description = "Query Scry and define failing acceptance tests for {{bead_id}}."
+
+[[steps]]
+id = "implement-tdd"
+title = "Implement {{bead_id}} with strict TDD on {{branch}}"
+needs = ["design"]
+description = "Write failing tests first, write minimal code, and add minted @scry.entry markers."
+
+[[steps]]
+id = "capture-ui-media"
+title = "Run Playwright E2E and PII guard for {{bead_id}}"
+needs = ["implement-tdd"]
+description = "Run npm run test:e2e against synthetic fixtures and verify zero PII leaks."
+
+[[steps]]
+id = "code-review"
+title = "Run code-review wisp for {{bead_id}}"
+needs = ["capture-ui-media"]
+description = "Run bd mol wisp code-review --var bead_id={{bead_id}} --var head_ref={{branch}}."
+
+[[steps]]
+id = "pr-ci-gate"
+title = "Wait for CI and Playwright checks on PR #{{pr_number}}"
+needs = ["code-review"]
+description = "Wait for ci and playwright-ui checks to pass on PR #{{pr_number}}."
+
+[steps.gate]
+type = "gh:run"
+id = "ci.yml"
+timeout = "30m"
+
+[[steps]]
+id = "pr-merge-gate"
+title = "Wait for PR #{{pr_number}} merge into main"
+needs = ["pr-ci-gate"]
+description = "Verify PR #{{pr_number}} merges into main, then close {{bead_id}}."
+
+[steps.gate]
+type = "gh:pr"
+await_id = "{{pr_number}}"

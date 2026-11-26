@@ -1,0 +1,30 @@
+{
+  "formula": "merge-release",
+  "description": "Verify PR readiness, merge into main, close Bead, and sync Dolt.",
+  "version": 1,
+  "type": "workflow",
+  "phase": "vapor",
+  "vars": {
+    "integration_branch": {
+      "description": "Target integration branch",
+      "default": "main"
+    },
+    "pr_number": {
+      "description": "Pull request number",
+      "required": true
+    }
+  },
+  "steps": [
+    {
+      "id": "verify-pr-ready",
+      "title": "Verify PR #{{pr_number}} CI checks",
+      "description": "Run python -m tools.sdlc_gate pr-ready {{pr_number}} --wait."
+    },
+    {
+      "id": "merge-and-close",
+      "title": "Merge PR #{{pr_number}} into {{integration_branch}}",
+      "needs": ["verify-pr-ready"],
+      "description": "Merge pull request, close parent Bead, and run bd dolt push."
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install Python and Node dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -e ".[dev]"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          npm ci
+      - name: Run ruff checks
+        run: ruff check tools/ tests/python/ .agents/hooks/
+      - name: Run Python unit tests
+        run: python -m pytest tests/python/
+      - name: Run Node unit tests
+        run: npm run test:unit
+      - name: Run PII guard on repository fixtures and docs
+        run: python -m tools.pii_guard tests/fixtures/ docs/
+      - name: Read pinned Beads and Dolt versions
+        run: |
+          BD_VERSION=$(tr -d '[:space:]' < .beads/version.txt)
+          echo "BD_VERSION=${BD_VERSION}" >> "$GITHUB_ENV"
+          echo "DOLT_VERSION=2.3.1" >> "$GITHUB_ENV"
+      - name: Cache bd and dolt binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/beads-ci-bin
+          key: beads-ci-linux-amd64-${{ env.BD_VERSION }}-${{ env.DOLT_VERSION }}
+      - name: Install bd and dolt binaries
+        run: |
+          mkdir -p "$HOME/.local/beads-ci-bin"
+          if [ ! -x "$HOME/.local/beads-ci-bin/bd" ]; then
+            rm -rf /tmp/beads-dl && mkdir -p /tmp/beads-dl
+            curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp/beads-dl
+            find /tmp/beads-dl -maxdepth 3 -type f -name bd -exec mv {} "$HOME/.local/beads-ci-bin/bd" \;
+            chmod +x "$HOME/.local/beads-ci-bin/bd"
+            rm -rf /tmp/beads-dl
+          fi
+          if [ ! -x "$HOME/.local/beads-ci-bin/dolt" ]; then
+            rm -rf /tmp/dolt-dl && mkdir -p /tmp/dolt-dl
+            curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz" | tar -xz -C /tmp/dolt-dl
+            mv /tmp/dolt-dl/dolt-linux-amd64/bin/dolt "$HOME/.local/beads-ci-bin/dolt"
+            chmod +x "$HOME/.local/beads-ci-bin/dolt"
+            rm -rf /tmp/dolt-dl
+          fi
+          echo "$HOME/.local/beads-ci-bin" >> "$GITHUB_PATH"
+      - name: Bootstrap Beads Dolt server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod 700 .beads
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          dolt config --global --add user.name "ci-bot"
+          dolt config --global --add user.email "ci@example.test"
+          mkdir -p .beads/dolt
+          if ! dolt clone "git+https://github.com/${GITHUB_REPOSITORY}" .beads/dolt/bv; then
+            echo "Dolt remote ref not ready yet; initializing ephemeral CI database."
+            bd init --prefix bv --non-interactive --server --server-port 3307 --init-if-missing
+          fi
+          printf "%s" "${BD_VERSION}" > .beads/.local_version
+          nohup dolt sql-server --host 127.0.0.1 --port 3307 --data-dir .beads/dolt --loglevel warning > .beads/dolt-server.log 2>&1 &
+          echo $! > .beads/dolt-server.pid
+          printf "3307" > .beads/dolt-server.port
+          python -c '
+          import socket, time, sys
+          for _ in range(40):
+              try:
+                  with socket.create_connection(("127.0.0.1", 3307), timeout=0.5):
+                      sys.exit(0)
+              except OSError:
+                  time.sleep(0.25)
+          sys.exit("Dolt SQL server did not open port 3307")
+          '
+          bd ping
+      - name: Validate Beads formulas and tracked files
+        run: |
+          python -m tools.sdlc_gate formula-check --require-bd
+          python -m tools.sdlc_gate no-forbidden-tracked
+      - name: Run Beads, Scry, TDD, and UI PR Gate
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python -m tools.sdlc_gate pr-gate --base-ref "origin/${{ github.base_ref }}" --head-ref HEAD --require-bd --verify-beads-exist
+      - name: Stop Beads Dolt server
+        if: always()
+        run: |
+          if [ -f .beads/dolt-server.pid ]; then
+            pid=$(cat .beads/dolt-server.pid)
+            kill "$pid" || true
+          fi
+
+  playwright-ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install dependencies and Playwright Chromium
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run Playwright E2E suite in synthetic test environment
+        env:
+          BEADS_TEST_ENV: synthetic
+          BEADS_FIXTURE_PATH: tests/fixtures/synthetic-beads.json
+        run: npm run test:e2e
+      - name: Verify zero PII in synthetic UI artifacts
+        run: python3 tools/pii_guard.py tests/fixtures/ test-results/
+      - name: Upload synthetic UI screenshots and videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-ui-media
+          path: test-results/
+          retention-days: 14

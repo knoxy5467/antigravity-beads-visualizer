@@ -1,0 +1,21 @@
+{
+  "formula": "pre-push-verify",
+  "description": "Verify local green-bar, clean merge-tree, and Dolt push before branch push.",
+  "version": 1,
+  "type": "workflow",
+  "phase": "vapor",
+  "vars": {},
+  "steps": [
+    {
+      "id": "run-green-bar",
+      "title": "Run full local green-bar suite",
+      "description": "Run python -m tools.sdlc_gate green-bar and npm run test:e2e."
+    },
+    {
+      "id": "push-dolt",
+      "title": "Push Beads Dolt state to origin",
+      "needs": ["run-green-bar"],
+      "description": "Run bd dolt push and verify refs/dolt/data stays synchronized."
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Antigravity Beads Visualizer</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="bv-header">
+    <div>
+      <h1 data-testid="bv-title">Beads Visualizer</h1>
+      <span class="bv-badge" data-testid="bv-workspace-badge">loading...</span>
+    </div>
+    <button id="refresh-btn" class="bv-btn" type="button">Refresh</button>
+  </header>
+
+  <main class="bv-layout">
+    <section class="bv-tree-panel">
+      <h2>Epic Hierarchy</h2>
+      <div id="epic-tree" class="bv-tree" data-testid="bv-epic-tree"></div>
+    </section>
+
+    <aside class="bv-inspector" data-testid="bv-inspector">
+      <h2>Issue Inspector</h2>
+      <div id="inspector-body" class="bv-inspector-empty">Select an epic or task to inspect details.</div>
+      <div class="bv-quote-box">
+        <button id="quote-btn" class="bv-btn" type="button" data-testid="bv-quote-btn" disabled>
+          Prepare Quote Pill
+        </button>
+        <pre id="quote-preview" class="bv-quote-preview" data-testid="bv-quote-preview"></pre>
+      </div>
+    </aside>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

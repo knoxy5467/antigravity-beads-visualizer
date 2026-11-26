@@ -1,0 +1,104 @@
+name: Beads Gate Monitor
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: read
+  actions: read
+
+concurrency:
+  group: beads-gates-dolt
+  cancel-in-progress: false
+
+jobs:
+  monitor-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Read pinned Beads and Dolt versions
+        run: |
+          BD_VERSION=$(tr -d '[:space:]' < .beads/version.txt)
+          echo "BD_VERSION=${BD_VERSION}" >> "$GITHUB_ENV"
+          echo "DOLT_VERSION=2.3.1" >> "$GITHUB_ENV"
+      - name: Cache bd and dolt binaries
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/beads-ci-bin
+          key: beads-ci-linux-amd64-${{ env.BD_VERSION }}-${{ env.DOLT_VERSION }}
+      - name: Install bd and dolt binaries
+        run: |
+          mkdir -p "$HOME/.local/beads-ci-bin"
+          if [ ! -x "$HOME/.local/beads-ci-bin/bd" ]; then
+            rm -rf /tmp/beads-dl && mkdir -p /tmp/beads-dl
+            curl -fsSL "https://github.com/gastownhall/beads/releases/download/v${BD_VERSION}/beads_${BD_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp/beads-dl
+            find /tmp/beads-dl -maxdepth 3 -type f -name bd -exec mv {} "$HOME/.local/beads-ci-bin/bd" \;
+            chmod +x "$HOME/.local/beads-ci-bin/bd"
+            rm -rf /tmp/beads-dl
+          fi
+          if [ ! -x "$HOME/.local/beads-ci-bin/dolt" ]; then
+            rm -rf /tmp/dolt-dl && mkdir -p /tmp/dolt-dl
+            curl -fsSL "https://github.com/dolthub/dolt/releases/download/v${DOLT_VERSION}/dolt-linux-amd64.tar.gz" | tar -xz -C /tmp/dolt-dl
+            mv /tmp/dolt-dl/dolt-linux-amd64/bin/dolt "$HOME/.local/beads-ci-bin/dolt"
+            chmod +x "$HOME/.local/beads-ci-bin/dolt"
+            rm -rf /tmp/dolt-dl
+          fi
+          echo "$HOME/.local/beads-ci-bin" >> "$GITHUB_PATH"
+      - name: Bootstrap Beads Dolt server
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod 700 .beads
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+          dolt config --global --add user.name "ci-bot"
+          dolt config --global --add user.email "ci@example.test"
+          mkdir -p .beads/dolt
+          if ! dolt clone "git+https://github.com/${GITHUB_REPOSITORY}" .beads/dolt/bv; then
+            echo "Dolt remote ref not ready yet; skipping gate monitor."
+            exit 0
+          fi
+          printf "%s" "${BD_VERSION}" > .beads/.local_version
+          nohup dolt sql-server --host 127.0.0.1 --port 3307 --data-dir .beads/dolt --loglevel warning > .beads/dolt-server.log 2>&1 &
+          echo $! > .beads/dolt-server.pid
+          printf "3307" > .beads/dolt-server.port
+          python -c '
+          import socket, time, sys
+          for _ in range(40):
+              try:
+                  with socket.create_connection(("127.0.0.1", 3307), timeout=0.5):
+                      sys.exit(0)
+              except OSError:
+                  time.sleep(0.25)
+          sys.exit("Dolt SQL server did not open port 3307")
+          '
+          bd ping
+      - name: Discover and evaluate Beads gates
+        if: exists('.beads/dolt/bv/.dolt')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bd gate discover || true
+          bd gate check --escalate || true
+          bd dolt pull || true
+          bd dolt push || true
+      - name: Stop Beads Dolt server
+        if: always()
+        run: |
+          if [ -f .beads/dolt-server.pid ]; then
+            pid=$(cat .beads/dolt-server.pid)
+            kill "$pid" || true
+          fi

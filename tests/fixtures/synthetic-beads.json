@@ -1,0 +1,96 @@
+{
+  "workspace": "/synthetic/workspace/beads-demo",
+  "issues": [
+    {
+      "id": "bv-meta-demo",
+      "title": "Meta-Epic: Synthetic Platform Delivery",
+      "issue_type": "epic",
+      "status": "in_progress",
+      "priority": 0,
+      "assignee": "agent-alpha",
+      "description": "Coordinate nested sub-epics and expansion tasks for the synthetic demo workspace.",
+      "acceptance": "All sub-epics and tasks reach closed status after verified tests.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Initialized synthetic fixture. | IN PROGRESS: Sub-epic tree rendering. | NEXT: Verify inspector and quote bridge. | BLOCKERS: None. | KEY DECISION: Read-only data adapter. | REFERENCE: docs/specs/sample-view.md",
+      "dependencies": [],
+      "comments": [
+        {
+          "author": "agent-alpha",
+          "created_at": "2026-11-25T10:00:00Z",
+          "text": "Meta-epic created for synthetic Playwright verification."
+        }
+      ]
+    },
+    {
+      "id": "bv-sub-tree",
+      "title": "Sub-Epic: Nested Tree and DAG Views",
+      "issue_type": "epic",
+      "status": "in_progress",
+      "priority": 1,
+      "assignee": "agent-beta",
+      "description": "Render nested epics, priority tags, and dependency edges.",
+      "acceptance": "Tree expands and collapses cleanly across three levels.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Tree schema defined. | IN PROGRESS: DAG edge badges. | NEXT: Add Playwright assertions.",
+      "dependencies": [
+        { "depends_on_id": "bv-meta-demo", "type": "parent-child" }
+      ],
+      "comments": []
+    },
+    {
+      "id": "bv-task-tree-ui",
+      "title": "Render recursive epic hierarchy",
+      "issue_type": "task",
+      "status": "closed",
+      "priority": 1,
+      "assignee": "agent-alpha",
+      "description": "Display meta-epics, sub-epics, and leaf tasks with completion bars.",
+      "acceptance": "All three levels appear in the DOM with accurate counts.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Recursive tree component verified. | IN PROGRESS: None. | NEXT: Close task.",
+      "dependencies": [
+        { "depends_on_id": "bv-sub-tree", "type": "parent-child" }
+      ],
+      "comments": []
+    },
+    {
+      "id": "bv-task-gate-check",
+      "title": "Gate: Synthetic PR CI Approval",
+      "issue_type": "gate",
+      "status": "open",
+      "priority": 0,
+      "assignee": "agent-beta",
+      "description": "Wait for synthetic CI checks and quote pill verification.",
+      "acceptance": "Gate resolves after CI and Playwright pass.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Gate created. | IN PROGRESS: Waiting on bv-task-inspector. | NEXT: Resolve gate.",
+      "dependencies": [
+        { "depends_on_id": "bv-sub-tree", "type": "parent-child" },
+        { "depends_on_id": "bv-task-inspector", "type": "blocks" }
+      ],
+      "comments": [
+        {
+          "author": "agent-beta",
+          "created_at": "2026-11-25T11:30:00Z",
+          "text": "Blocked until inspector panel renders six-key notes."
+        }
+      ]
+    },
+    {
+      "id": "bv-task-inspector",
+      "title": "Render issue inspector and quote copy",
+      "issue_type": "task",
+      "status": "in_progress",
+      "priority": 1,
+      "assignee": "agent-alpha",
+      "description": "Show acceptance criteria, six-key notes, comments, and quote payload.",
+      "acceptance": "Clicking a bead opens the inspector and prepares a quote pill.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Layout ready. | IN PROGRESS: Quote pill action. | NEXT: Run Playwright.",
+      "dependencies": [
+        { "depends_on_id": "bv-sub-tree", "type": "parent-child" }
+      ],
+      "comments": []
+    }
+  ]
+}

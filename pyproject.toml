@@ -1,0 +1,25 @@
+[project]
+name = "antigravity-beads-visualizer"
+version = "0.1.0"
+description = "Antigravity plugin for read-only Beads epic, workflow, and dependency graph visualization."
+requires-python = ">=3.12"
+dependencies = [
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "ruff>=0.6",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]

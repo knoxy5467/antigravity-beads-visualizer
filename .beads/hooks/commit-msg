@@ -1,0 +1,14 @@
+#!/usr/bin/env sh
+REPO_TOP=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+PY_EXE=""
+for cand in "$REPO_TOP/.venv/Scripts/python.exe" "$REPO_TOP/.venv/bin/python"; do
+  if [ -x "$cand" ]; then
+    PY_EXE="$cand"
+    break
+  fi
+done
+if [ -z "$PY_EXE" ]; then
+  if command -v python3 >/dev/null 2>&1; then PY_EXE="python3"; else PY_EXE="python"; fi
+fi
+"$PY_EXE" -m tools.sdlc_gate git-commit-msg "$1" --repo-root "$REPO_TOP"
+exit $?

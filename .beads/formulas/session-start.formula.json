@@ -1,0 +1,27 @@
+{
+  "formula": "session-start",
+  "description": "Sync Dolt, refresh Scry, and verify Beads gate readiness.",
+  "version": 1,
+  "type": "workflow",
+  "phase": "vapor",
+  "vars": {},
+  "steps": [
+    {
+      "id": "sync-dolt",
+      "title": "Pull Beads Dolt state and check port 3307",
+      "description": "Run bd ping and bd dolt pull so the local Dolt server matches origin."
+    },
+    {
+      "id": "refresh-scry",
+      "title": "Refresh Scry SQLite index",
+      "needs": ["sync-dolt"],
+      "description": "Run scry surface and python -m tools.sdlc_gate scry-hygiene."
+    },
+    {
+      "id": "check-gates",
+      "title": "Check ready work and open gates",
+      "needs": ["refresh-scry"],
+      "description": "Run bd gate check and bd ready --json."
+    }
+  ]
+}
