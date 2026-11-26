@@ -22,7 +22,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type {
   BeadBlockedEntry,
@@ -384,7 +384,12 @@ export function createStandaloneServer(): http.Server {
   });
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+const isStandaloneMain =
+  Boolean(process.argv[1]) &&
+  /[\\/]standalone[\\/]server\.js$/i.test(resolve(process.argv[1])) &&
+  resolve(fileURLToPath(import.meta.url)).toLowerCase() === resolve(process.argv[1]).toLowerCase();
+
+if (isStandaloneMain) {
   const port = Number(process.env.PORT || 4173);
   const server = createStandaloneServer();
   server.listen(port, '127.0.0.1', () => {

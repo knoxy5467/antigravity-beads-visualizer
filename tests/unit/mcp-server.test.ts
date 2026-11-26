@@ -1,4 +1,8 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -65,4 +69,61 @@ test('createBeadsMcpServer exposes MCP App resource, entrypoints, and app-only t
   } finally {
     await Promise.all([client.close(), server.close()]);
   }
+});
+
+test('bundled MCP stdio binary emits only valid JSON-RPC on stdout during initialize', async () => {
+  const bundlePath = resolve(process.cwd(), 'dist', 'plugin', 'bin', 'beads-visualizer-mcp.mjs');
+  assert.equal(existsSync(bundlePath), true, 'Expected built MCP bundle at dist/plugin/bin/beads-visualizer-mcp.mjs');
+
+  const child = spawn(process.execPath, [bundlePath], {
+    cwd: tmpdir(),
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf-8');
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf-8');
+  });
+
+  const initMsg = JSON.stringify({
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'stdio-regression', version: '1.0.0' },
+    },
+  });
+  child.stdin.write(`${initMsg}\n`);
+
+  const responseLine = await new Promise<string>((resolveLine, rejectLine) => {
+    const timer = setTimeout(() => {
+      rejectLine(new Error(`Timed out waiting for initialize response. stdout=${stdout} stderr=${stderr}`));
+    }, 10000);
+    const onData = () => {
+      const lines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length > 0) {
+        clearTimeout(timer);
+        child.stdout.off('data', onData);
+        resolveLine(lines[0] || '');
+      }
+    };
+    child.stdout.on('data', onData);
+  });
+
+  child.stdin.end();
+  child.kill();
+
+  const nonEmptyLines = stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  assert.ok(nonEmptyLines.length >= 1);
+  for (const line of nonEmptyLines) {
+    assert.doesNotThrow(() => JSON.parse(line), `Non-JSON stdout line detected: ${line}`);
+  }
+  const parsed = JSON.parse(responseLine) as { result?: { serverInfo?: { name?: string } } };
+  assert.equal(parsed.result?.serverInfo?.name, 'beads-visualizer');
 });
