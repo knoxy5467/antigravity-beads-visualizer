@@ -2,146 +2,277 @@
 // id: src.ui-app~d94924b2
 // kind: code
 // summary: >-
-//   Render the interactive Beads epic tree, issue inspector, and quote pill preview in TypeScript.
-//   Also: ui, app, tree-render, inspector, quote-pill, playwright, typescript
+//   Coordinate the 4-tab Beads Visualizer shell, live refresh, filters, and inspector bridge.
+//   Also: ui, app, tabs, live-refresh, inspector, quote-pill, typescript
 // status: active
-// weight: 0.8
+// weight: 0.85
 // tags: ["topic:ui", "ui", "scope:src", "src", "beads", "inspector", "typescript"]
 // rationale: >-
-//   Drives the standalone and embedded browser DOM from read-only Beads snapshots.
-// applies: rendering epic trees, inspecting bead details, preparing quote payloads
+//   Binds the Epic Tree, Dependency DAG, Workflow Board, Gates view, and Issue Inspector together.
+// applies: initializing visualizer ui, switching tabs, polling beads snapshots
 // seeded_questions:
-//   - "How does app.ts render nested epics and populate the issue inspector?"
-//   - "src/ui/app.ts renderNode"
+//   - "How does app.ts coordinate tab views, live polling, and inspector actions?"
+//   - "src/ui/app.ts renderAllViews"
 // @scry.entry.end
 
-import {
-  buildEpicTree,
-  computeCompletion,
-  formatQuotePayload,
-  type BeadIssue,
-  type BeadSnapshot,
-  type BeadTreeNode,
-} from '../core/graph.js';
+import type { BeadIssue, BeadSnapshot } from '../core/graph.js';
+import type { LaneGroupBy } from '../core/lanes.js';
+import { createHostBridge } from './host-bridge.js';
+import { renderBoardView } from './views/board.js';
+import { renderDagView, type DagViewState } from './views/dag.js';
+import { renderGatesView } from './views/gates.js';
+import { renderInspector } from './views/inspector.js';
+import { renderEpicTreeView, type TreeFilterState } from './views/tree.js';
 
+type TabKey = 'tree' | 'dag' | 'board' | 'gates';
+
+const bridge = createHostBridge();
 let currentSnapshot: BeadSnapshot | null = null;
 let selectedIssue: BeadIssue | null = null;
+let selectedWorkspace = '';
+let activeTab: TabKey = 'tree';
+let pollTimer: number | null = null;
 
-function renderNode(node: BeadTreeNode): HTMLDivElement {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'bv-node';
+const collapsedIds = new Set<string>();
+const treeFilters: TreeFilterState = {
+  search: '',
+  status: 'all',
+  priority: 'all',
+};
+const dagState: DagViewState = {
+  visibleTypes: new Set(['blocks', 'parent-child', 'discovered-from', 'relates-to']),
+  zoom: 1,
+};
+let boardGroupBy: LaneGroupBy = 'all';
 
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'bv-node-btn';
-  btn.setAttribute('data-testid', `tree-node-${node.id}`);
-
-  const stats = computeCompletion(node);
-  const labelWrap = document.createElement('span');
-  const depthPill = document.createElement('span');
-  depthPill.className = 'bv-depth-pill';
-  depthPill.textContent = `L${node.depth}`;
-  const labelText = document.createElement('span');
-  labelText.textContent = `${node.id}: ${node.title}`;
-  labelWrap.append(depthPill, labelText);
-
-  const meta = document.createElement('span');
-  meta.className = 'bv-meta';
-  meta.textContent = `P${node.priority ?? 2} | ${node.status ?? 'open'} (${stats.closed}/${stats.total})`;
-
-  btn.append(labelWrap, meta);
-  btn.addEventListener('click', () => selectIssue(node));
-  wrapper.appendChild(btn);
-
-  for (const child of node.children) {
-    wrapper.appendChild(renderNode(child));
-  }
-  return wrapper;
+function setActionStatus(text: string): void {
+  const statusEl = document.getElementById('action-status');
+  if (statusEl) statusEl.textContent = text;
 }
 
-function appendLabeledParagraph(parent: HTMLElement, label: string, value: string): void {
-  const p = document.createElement('p');
-  const strong = document.createElement('strong');
-  strong.textContent = `${label}: `;
-  p.append(strong, document.createTextNode(value));
-  parent.appendChild(p);
+async function handleQuote(issue: BeadIssue): Promise<void> {
+  const previewEl = document.getElementById('quote-preview');
+  const payload = await bridge.quoteBead(issue);
+  if (previewEl) previewEl.textContent = payload;
+  setActionStatus(`Prepared quote pill for ${issue.id}.`);
 }
 
-function selectIssue(issue: BeadIssue): void {
+async function handleAgentMessage(issue: BeadIssue, target: 'current' | 'new'): Promise<void> {
+  const msg = `Regarding ${issue.id} (${issue.title}) [${issue.status ?? 'open'}]: please review and proceed.`;
+  const result = await bridge.sendAgentMessage(msg, target);
+  setActionStatus(result);
+}
+
+async function selectIssue(issue: BeadIssue): Promise<void> {
   selectedIssue = issue;
-  const body = document.getElementById('inspector-body');
+  const bodyEl = document.getElementById('inspector-body');
   const quoteBtn = document.getElementById('quote-btn') as HTMLButtonElement | null;
   const quotePreview = document.getElementById('quote-preview');
-  if (!body || !quoteBtn || !quotePreview) return;
+  if (!bodyEl || !quoteBtn || !quotePreview || !currentSnapshot) return;
 
   quoteBtn.disabled = false;
   quotePreview.textContent = '';
-  body.replaceChildren();
 
-  const heading = document.createElement('h3');
-  heading.textContent = `${issue.id} - ${issue.title}`;
-  body.appendChild(heading);
+  let comments = issue.comments || [];
+  try {
+    const fetched = await bridge.fetchIssueComments(issue.id, selectedWorkspace || undefined);
+    if (fetched.length > 0) comments = fetched;
+  } catch {
+    // Keep snapshot comments when detail fetch is unavailable.
+  }
 
-  appendLabeledParagraph(body, 'Status', `${issue.status ?? 'open'} | Priority: P${issue.priority ?? 2}`);
-  appendLabeledParagraph(body, 'Description', issue.description || 'No description.');
-  appendLabeledParagraph(body, 'Acceptance', issue.acceptance || 'None');
-  appendLabeledParagraph(body, 'Notes', issue.notes || 'None');
+  renderInspector(bodyEl, issue, comments, currentSnapshot, {
+    onSelectIssue: (targetIssue) => void selectIssue(targetIssue),
+    onQuoteIssue: (targetIssue) => void handleQuote(targetIssue),
+    onMessageAgent: (targetIssue, target) => void handleAgentMessage(targetIssue, target),
+    onCopyText: (text) => {
+      setActionStatus(`Spec path: ${text}`);
+    },
+  });
 
-  const commentsWrap = document.createElement('div');
-  const commentsTitle = document.createElement('strong');
-  commentsTitle.textContent = 'Comments:';
-  const list = document.createElement('ul');
-  const comments = issue.comments || [];
-  if (comments.length === 0) {
-    const emptyItem = document.createElement('li');
-    emptyItem.textContent = 'None';
-    list.appendChild(emptyItem);
-  } else {
-    for (const c of comments) {
-      const item = document.createElement('li');
-      const author = document.createElement('strong');
-      author.textContent = `${c.author}: `;
-      item.append(author, document.createTextNode(c.text));
-      list.appendChild(item);
+  renderAllViews();
+}
+
+function switchTab(nextTab: TabKey): void {
+  activeTab = nextTab;
+  const tabKeys: TabKey[] = ['tree', 'dag', 'board', 'gates'];
+  for (const key of tabKeys) {
+    const tabBtn = document.getElementById(`tab-${key}`);
+    const panel = document.getElementById(`view-${key}`);
+    if (tabBtn) tabBtn.classList.toggle('is-active', key === activeTab);
+    if (panel) panel.classList.toggle('is-hidden', key !== activeTab);
+  }
+  const treeToolbar = document.getElementById('tree-toolbar');
+  if (treeToolbar) {
+    treeToolbar.classList.toggle('is-hidden', activeTab !== 'tree');
+  }
+  renderAllViews();
+}
+
+function renderAllViews(): void {
+  if (!currentSnapshot) return;
+  const selectedId = selectedIssue ? selectedIssue.id : null;
+
+  const treeEl = document.getElementById('view-tree');
+  if (treeEl && activeTab === 'tree') {
+    renderEpicTreeView(
+      treeEl,
+      currentSnapshot,
+      selectedId,
+      collapsedIds,
+      treeFilters,
+      (issue) => void selectIssue(issue),
+      (id) => {
+        if (collapsedIds.has(id)) collapsedIds.delete(id);
+        else collapsedIds.add(id);
+        renderAllViews();
+      }
+    );
+  }
+
+  const dagEl = document.getElementById('view-dag');
+  if (dagEl && activeTab === 'dag') {
+    renderDagView(
+      dagEl,
+      currentSnapshot,
+      selectedId,
+      dagState,
+      (issue) => void selectIssue(issue),
+      () => renderAllViews()
+    );
+  }
+
+  const boardEl = document.getElementById('view-board');
+  if (boardEl && activeTab === 'board') {
+    renderBoardView(
+      boardEl,
+      currentSnapshot,
+      selectedId,
+      boardGroupBy,
+      (nextGroup) => {
+        boardGroupBy = nextGroup;
+        renderAllViews();
+      },
+      (issue) => void selectIssue(issue)
+    );
+  }
+
+  const gatesEl = document.getElementById('view-gates');
+  if (gatesEl && activeTab === 'gates') {
+    renderGatesView(
+      gatesEl,
+      currentSnapshot,
+      selectedId,
+      (issue) => void selectIssue(issue),
+      (issue) => void handleQuote(issue),
+      (issue) => void handleAgentMessage(issue, 'current')
+    );
+  }
+}
+
+async function loadWorkspaces(): Promise<void> {
+  const selectEl = document.getElementById('workspace-select') as HTMLSelectElement | null;
+  if (!selectEl) return;
+  try {
+    const workspaces = await bridge.fetchWorkspaces();
+    selectEl.replaceChildren();
+    for (const ws of workspaces) {
+      const opt = document.createElement('option');
+      opt.value = ws;
+      opt.textContent = ws;
+      selectEl.appendChild(opt);
     }
-  }
-  commentsWrap.append(commentsTitle, list);
-  body.appendChild(commentsWrap);
-}
-
-async function loadAndRender(): Promise<void> {
-  const res = await fetch('/api/snapshot');
-  currentSnapshot = (await res.json()) as BeadSnapshot;
-
-  const envBanner = document.querySelector('[data-testid="bv-env-banner"]');
-  if (envBanner) {
-    envBanner.textContent =
-      currentSnapshot.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Workspace';
-  }
-
-  const badge = document.querySelector('[data-testid="bv-workspace-badge"]');
-  if (badge) {
-    badge.textContent = `${currentSnapshot.workspace} (${currentSnapshot.testEnv})`;
-  }
-
-  const treeContainer = document.getElementById('epic-tree');
-  if (!treeContainer) return;
-  treeContainer.replaceChildren();
-  const { roots } = buildEpicTree(currentSnapshot.issues || []);
-  for (const root of roots) {
-    treeContainer.appendChild(renderNode(root));
+    if (workspaces.length > 0 && !selectedWorkspace) {
+      selectedWorkspace = workspaces[0] || '';
+      selectEl.value = selectedWorkspace;
+    }
+  } catch {
+    // Ignore workspace dropdown errors during initialization.
   }
 }
 
-document.getElementById('refresh-btn')?.addEventListener('click', () => {
-  void loadAndRender();
-});
-document.getElementById('quote-btn')?.addEventListener('click', () => {
-  if (!selectedIssue) return;
-  const preview = document.getElementById('quote-preview');
-  if (preview) {
-    preview.textContent = formatQuotePayload(selectedIssue);
-  }
-});
+async function refreshSnapshot(forceFull = false): Promise<void> {
+  const badgeEl = document.querySelector('[data-testid="bv-workspace-badge"]');
+  const bannerEl = document.querySelector('[data-testid="bv-env-banner"]');
+  const etag = forceFull ? undefined : currentSnapshot?.etag;
+  const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
+  if (data.unchanged) return;
 
-void loadAndRender();
+  currentSnapshot = data;
+  if (badgeEl) badgeEl.textContent = data.workspace;
+  if (bannerEl) {
+    bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';
+  }
+
+  if (selectedIssue) {
+    const updated = data.issues.find((item) => item.id === selectedIssue?.id);
+    if (updated) selectedIssue = updated;
+  }
+  renderAllViews();
+}
+
+function updateAutoPoll(enabled: boolean): void {
+  if (pollTimer !== null) {
+    window.clearInterval(pollTimer);
+    pollTimer = null;
+  }
+  if (enabled) {
+    pollTimer = window.setInterval(() => {
+      void refreshSnapshot(false);
+    }, 5000);
+  }
+}
+
+function bindEvents(): void {
+  document.getElementById('tab-tree')?.addEventListener('click', () => switchTab('tree'));
+  document.getElementById('tab-dag')?.addEventListener('click', () => switchTab('dag'));
+  document.getElementById('tab-board')?.addEventListener('click', () => switchTab('board'));
+  document.getElementById('tab-gates')?.addEventListener('click', () => switchTab('gates'));
+
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
+    void refreshSnapshot(true);
+  });
+
+  document.getElementById('quote-btn')?.addEventListener('click', () => {
+    if (selectedIssue) void handleQuote(selectedIssue);
+  });
+
+  const searchInput = document.getElementById('search-input') as HTMLInputElement | null;
+  searchInput?.addEventListener('input', () => {
+    treeFilters.search = searchInput.value;
+    renderAllViews();
+  });
+
+  const statusSelect = document.getElementById('status-filter') as HTMLSelectElement | null;
+  statusSelect?.addEventListener('change', () => {
+    treeFilters.status = statusSelect.value;
+    renderAllViews();
+  });
+
+  const prioritySelect = document.getElementById('priority-filter') as HTMLSelectElement | null;
+  prioritySelect?.addEventListener('change', () => {
+    treeFilters.priority = prioritySelect.value;
+    renderAllViews();
+  });
+
+  const workspaceSelect = document.getElementById('workspace-select') as HTMLSelectElement | null;
+  workspaceSelect?.addEventListener('change', () => {
+    selectedWorkspace = workspaceSelect.value;
+    void refreshSnapshot(true);
+  });
+
+  const autoPollToggle = document.getElementById('auto-poll-toggle') as HTMLInputElement | null;
+  autoPollToggle?.addEventListener('change', () => {
+    updateAutoPoll(autoPollToggle.checked);
+  });
+}
+
+async function init(): Promise<void> {
+  bindEvents();
+  await loadWorkspaces();
+  await refreshSnapshot(true);
+  const autoPollToggle = document.getElementById('auto-poll-toggle') as HTMLInputElement | null;
+  updateAutoPoll(autoPollToggle ? autoPollToggle.checked : true);
+}
+
+void init();

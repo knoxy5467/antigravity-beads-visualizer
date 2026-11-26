@@ -41,3 +41,18 @@ test('groupLaneItems groups by all, epic, and assignee', () => {
   assert.equal(assigneeGroups.get('agent-alpha')?.length, 2);
   assert.equal(assigneeGroups.get('Unassigned')?.length, 1);
 });
+
+test('groupLaneItems falls back to parent-child dependency when parent is omitted', () => {
+  const groups = groupLaneItems(
+    [
+      {
+        id: 'bv-child-1',
+        title: 'Child',
+        status: 'open',
+        dependencies: [{ depends_on_id: 'bv-sub-gates', type: 'parent-child' }],
+      },
+    ],
+    'epic'
+  );
+  assert.equal(groups.get('bv-sub-gates')?.length, 1);
+});
