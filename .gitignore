@@ -24,6 +24,7 @@ blob-report/
 
 # Beads and Dolt runtime files (Dolt data stays on refs/dolt/data)
 .beads.gate.lock
+.beads/.hook_active_cache.json
 .dolt/
 .beads/dolt/
 .beads/embeddeddolt/

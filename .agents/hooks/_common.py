@@ -65,7 +65,7 @@ def find_scry_executable() -> str | None:
     return shutil.which("scry")
 
 
-def run_bd(args: list[str], cwd: Path = REPO_ROOT, timeout: int = 8) -> tuple[int, str, str]:
+def run_bd(args: list[str], cwd: Path = REPO_ROOT, timeout: int = 20) -> tuple[int, str, str]:
     """Run one Beads CLI command and return exit code, stdout, and stderr."""
     bd_exe = find_bd_executable()
     if not bd_exe:
@@ -103,10 +103,26 @@ def _parse_issues(raw: str) -> list[dict[str, Any]]:
 
 def get_in_progress_beads(cwd: Path = REPO_ROOT) -> tuple[bool, list[dict[str, Any]], str]:
     """Return reachability, active in-progress beads, and error text."""
-    code, stdout, stderr = run_bd(["list", "--status", "in_progress", "--json"], cwd=cwd)
+    import time
+
+    cache_file = cwd / ".beads" / ".hook_active_cache.json"
+    if cache_file.is_file():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            if time.time() - float(cached.get("ts", 0)) < 120 and cached.get("active"):
+                return True, cached["active"], ""
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+    code, stdout, stderr = run_bd(["list", "--status", "in_progress", "--readonly", "--json"], cwd=cwd)
     if code != 0:
         return False, [], f"{stdout}\n{stderr}".strip()
-    return True, _parse_issues(stdout), ""
+    active = _parse_issues(stdout)
+    if active and (cwd / ".beads").is_dir():
+        try:
+            cache_file.write_text(json.dumps({"ts": time.time(), "active": active}), encoding="utf-8")
+        except OSError:
+            pass
+    return True, active, ""
 
 
 def get_ready_count(cwd: Path = REPO_ROOT) -> int | None:
