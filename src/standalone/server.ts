@@ -66,14 +66,43 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/core/lanes.js': { file: join(REPO_ROOT, 'dist', 'src', 'core', 'lanes.js'), type: 'application/javascript; charset=utf-8' },
 };
 
-const EMPTY_STATS: BeadStatsSummary = {
-  total_issues: 0,
-  open_issues: 0,
-  in_progress_issues: 0,
-  blocked_issues: 0,
-  closed_issues: 0,
-  ready_issues: 0,
-};
+export const BD_EXEC_OPTIONS = {
+  timeout: 45000,
+  maxBuffer: 10 * 1024 * 1024,
+} as const;
+
+/**
+ * Derive blocked issue entries from open issues with unresolved blocks dependencies.
+ */
+export function deriveBlockedEntries(issues: BeadIssue[]): BeadBlockedEntry[] {
+  const byId = new Map<string, BeadIssue>(issues.map((issue) => [issue.id, issue]));
+  const entries: BeadBlockedEntry[] = [];
+  for (const issue of issues) {
+    const status = issue.status || 'open';
+    if (status === 'closed') continue;
+    const blockers: string[] = [];
+    for (const dep of issue.dependencies || []) {
+      if ((dep.type || 'blocks') === 'blocks' && dep.depends_on_id) {
+        const blocker = byId.get(dep.depends_on_id);
+        if (!blocker || blocker.status !== 'closed') {
+          blockers.push(dep.depends_on_id);
+        }
+      }
+    }
+    if (status === 'blocked' || blockers.length > 0) {
+      entries.push({
+        id: issue.id,
+        title: issue.title,
+        status,
+        priority: issue.priority ?? 2,
+        issue_type: issue.issue_type || 'task',
+        blocked_by_count: blockers.length,
+        blocked_by: blockers,
+      });
+    }
+  }
+  return entries;
+}
 
 const BEAD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED_SUBCOMMANDS = new Set(['add', 'list', 'show', 'close', 'update', 'delete']);
@@ -151,27 +180,18 @@ export async function loadBeadsSnapshot(options: SnapshotOptions = {}): Promise<
 
   const cwd = await resolveDefaultWorkspace(options);
   const bdExe = resolveBdExecutable();
-  const [listRes, blockedRes, statsRes] = await Promise.all([
-    execFileAsync(bdExe, ['list', '--all', '--include-gates', '--limit', '0', '--readonly', '--json'], {
-      cwd,
-      timeout: 15000,
-    }),
-    execFileAsync(bdExe, ['blocked', '--readonly', '--json'], { cwd, timeout: 15000 }).catch(() => ({
-      stdout: '[]',
-    })),
-    execFileAsync(bdExe, ['stats', '--readonly', '--json'], { cwd, timeout: 15000 }).catch(() => ({
-      stdout: '{}',
-    })),
-  ]);
+  const listRes = await execFileAsync(
+    bdExe,
+    ['list', '--all', '--include-gates', '--limit', '0', '--readonly', '--json'],
+    { cwd, ...BD_EXEC_OPTIONS }
+  );
 
   const parsedIssues = JSON.parse(listRes.stdout || '[]') as unknown;
   const issues = Array.isArray(parsedIssues) ? (parsedIssues as BeadIssue[]) : [];
-  const parsedBlocked = JSON.parse(blockedRes.stdout || '[]') as unknown;
-  const blocked = Array.isArray(parsedBlocked) ? (parsedBlocked as BeadBlockedEntry[]) : [];
-  const parsedStats = JSON.parse(statsRes.stdout || '{}') as { summary?: BeadStatsSummary };
-  const stats = parsedStats.summary ?? computeStatsFallback(issues, blocked) ?? EMPTY_STATS;
+  const blocked = deriveBlockedEntries(issues);
+  const stats = computeStatsFallback(issues, blocked);
   const etag = createHash('sha256')
-    .update(listRes.stdout + blockedRes.stdout)
+    .update(listRes.stdout)
     .digest('hex')
     .slice(0, 16);
 
@@ -205,7 +225,7 @@ export async function loadIssueComments(
   const bdExe = resolveBdExecutable();
   const { stdout } = await execFileAsync(bdExe, ['comments', issueId, '--readonly', '--json'], {
     cwd,
-    timeout: 10000,
+    ...BD_EXEC_OPTIONS,
   });
   const parsed = JSON.parse(stdout || '[]') as unknown;
   return Array.isArray(parsed) ? (parsed as BeadComment[]) : [];
