@@ -45,6 +45,7 @@ jobs:
         run: |
           npm run typecheck
           npm run build
+          npm run build:plugin
       - name: Run Node unit tests
         run: npm run test:unit
       - name: Run PII guard on repository fixtures and docs
@@ -143,7 +144,9 @@ jobs:
         env:
           BEADS_TEST_ENV: synthetic
           BEADS_FIXTURE_PATH: tests/fixtures/synthetic-beads.json
-        run: npm run test:e2e
+        run: |
+          npm run build:plugin
+          npm run test:e2e
       - name: Verify zero PII in synthetic UI artifacts
         run: python3 tools/pii_guard.py tests/fixtures/ test-results/
       - name: Upload synthetic UI screenshots and videos

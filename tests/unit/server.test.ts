@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   computeStatsFallback,
@@ -119,5 +122,23 @@ test('createStandaloneServer serves health, workspaces, snapshot etag, and rejec
     delete process.env.BEADS_FIXTURE_PATH;
     delete process.env.BEADS_TEST_ENV;
     server.close();
+  }
+});
+
+test('listBeadsWorkspaces discovers directories containing .beads via BEADS_WORKSPACES', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'bv-ws-'));
+  mkdirSync(join(tempRoot, '.beads'), { recursive: true });
+  const prevWorkspaces = process.env.BEADS_WORKSPACES;
+  const prevFixture = process.env.BEADS_FIXTURE_PATH;
+  delete process.env.BEADS_FIXTURE_PATH;
+  process.env.BEADS_WORKSPACES = tempRoot;
+  try {
+    const workspaces = await listBeadsWorkspaces();
+    assert.ok(workspaces.includes(tempRoot));
+  } finally {
+    if (prevWorkspaces === undefined) delete process.env.BEADS_WORKSPACES;
+    else process.env.BEADS_WORKSPACES = prevWorkspaces;
+    if (prevFixture !== undefined) process.env.BEADS_FIXTURE_PATH = prevFixture;
+    rmSync(tempRoot, { recursive: true, force: true });
   }
 });

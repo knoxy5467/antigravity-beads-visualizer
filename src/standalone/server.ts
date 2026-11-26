@@ -21,7 +21,7 @@ import { existsSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import type {
@@ -48,7 +48,12 @@ const STATIC_ROUTES: Record<string, StaticAsset> = {
   '/': { file: join(REPO_ROOT, 'src', 'ui', 'index.html'), type: 'text/html; charset=utf-8' },
   '/index.html': { file: join(REPO_ROOT, 'src', 'ui', 'index.html'), type: 'text/html; charset=utf-8' },
   '/ui/styles.css': { file: join(REPO_ROOT, 'src', 'ui', 'styles.css'), type: 'text/css; charset=utf-8' },
-  '/ui/app.js': { file: join(REPO_ROOT, 'dist', 'src', 'ui', 'app.js'), type: 'application/javascript; charset=utf-8' },
+  '/ui/app.js': {
+    file: existsSync(join(REPO_ROOT, 'dist', 'mcp-app', 'app.js'))
+      ? join(REPO_ROOT, 'dist', 'mcp-app', 'app.js')
+      : join(REPO_ROOT, 'dist', 'src', 'ui', 'app.js'),
+    type: 'application/javascript; charset=utf-8',
+  },
   '/ui/host-bridge.js': { file: join(REPO_ROOT, 'dist', 'src', 'ui', 'host-bridge.js'), type: 'application/javascript; charset=utf-8' },
   '/ui/views/tree.js': { file: join(REPO_ROOT, 'dist', 'src', 'ui', 'views', 'tree.js'), type: 'application/javascript; charset=utf-8' },
   '/ui/views/dag.js': { file: join(REPO_ROOT, 'dist', 'src', 'ui', 'views', 'dag.js'), type: 'application/javascript; charset=utf-8' },
@@ -144,7 +149,7 @@ export async function loadBeadsSnapshot(options: SnapshotOptions = {}): Promise<
     };
   }
 
-  const cwd = options.cwd ?? REPO_ROOT;
+  const cwd = await resolveDefaultWorkspace(options);
   const bdExe = resolveBdExecutable();
   const [listRes, blockedRes, statsRes] = await Promise.all([
     execFileAsync(bdExe, ['list', '--all', '--include-gates', '--limit', '0', '--readonly', '--json'], {
@@ -196,7 +201,7 @@ export async function loadIssueComments(
     const found = snap.issues.find((i) => i.id === issueId);
     return found?.comments ?? [];
   }
-  const cwd = options.cwd ?? REPO_ROOT;
+  const cwd = await resolveDefaultWorkspace(options);
   const bdExe = resolveBdExecutable();
   const { stdout } = await execFileAsync(bdExe, ['comments', issueId, '--readonly', '--json'], {
     cwd,
@@ -206,8 +211,16 @@ export async function loadIssueComments(
   return Array.isArray(parsed) ? (parsed as BeadComment[]) : [];
 }
 
+async function resolveDefaultWorkspace(options: SnapshotOptions = {}): Promise<string> {
+  if (options.cwd) return options.cwd;
+  if (existsSync(join(REPO_ROOT, '.beads'))) return REPO_ROOT;
+  if (existsSync(join(process.cwd(), '.beads'))) return process.cwd();
+  const discovered = await listBeadsWorkspaces(options);
+  return discovered[0] ?? REPO_ROOT;
+}
+
 /**
- * List nearby local workspaces that contain a .beads directory.
+ * List local workspaces that contain a .beads directory.
  */
 export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promise<string[]> {
   const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH ?? '';
@@ -215,26 +228,53 @@ export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promis
     const snap = await loadBeadsSnapshot(options);
     return [snap.workspace];
   }
-  const parentDir = dirname(REPO_ROOT);
-  const found: string[] = [];
-  try {
-    const entries = await readdir(parentDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const candidate = join(parentDir, entry.name);
-      if (existsSync(join(candidate, '.beads'))) {
-        found.push(candidate);
-      }
-    }
-  } catch {
-    return [REPO_ROOT];
+
+  const found = new Set<string>();
+  const envList = (process.env.BEADS_WORKSPACES || '')
+    .split(delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  for (const dir of envList) {
+    if (existsSync(join(dir, '.beads'))) found.add(dir);
   }
-  return found.length > 0 ? found : [REPO_ROOT];
+
+  for (const directDir of [process.cwd(), REPO_ROOT]) {
+    if (existsSync(join(directDir, '.beads'))) found.add(directDir);
+  }
+
+  const scanRoots = [
+    dirname(REPO_ROOT),
+    join(homedir(), 'Documents'),
+    join(homedir(), 'Projects'),
+    join(homedir(), 'repos'),
+  ];
+  for (const root of scanRoots) {
+    try {
+      const entries = await readdir(root, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const candidate = join(root, entry.name);
+        if (existsSync(join(candidate, '.beads'))) {
+          found.add(candidate);
+        }
+      }
+    } catch {
+      // Ignore missing or unreadable workspace scan roots.
+    }
+  }
+
+  return found.size > 0 ? Array.from(found) : [REPO_ROOT];
 }
 
-async function validateWorkspaceParam(workspaceParam: string | null): Promise<string | undefined | null> {
+/**
+ * Validate that a workspace parameter belongs to the discovered local Beads workspaces.
+ */
+export async function validateWorkspaceParam(
+  workspaceParam: string | null,
+  options: SnapshotOptions = {}
+): Promise<string | undefined | null> {
   if (!workspaceParam) return undefined;
-  const allowed = await listBeadsWorkspaces();
+  const allowed = await listBeadsWorkspaces(options);
   return allowed.includes(workspaceParam) ? workspaceParam : null;
 }
 

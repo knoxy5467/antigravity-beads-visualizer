@@ -7,13 +7,20 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "build:plugin": "npm run build && node dist/src/scripts/build-plugin.js",
     "start:standalone": "npm run build && node dist/src/standalone/server.js",
     "test:unit": "npm run build && node --test dist/tests/unit/*.test.js",
-    "test:e2e": "npm run build && npx playwright test"
+    "test:e2e": "npm run build:plugin && npx playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",
     "@types/node": "^22.20.7",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.4",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
   }
 }
