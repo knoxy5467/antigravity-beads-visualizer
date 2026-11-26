@@ -30,14 +30,19 @@ function renderNode(node) {
   btn.setAttribute('data-testid', `tree-node-${node.id}`);
 
   const stats = computeCompletion(node);
-  const label = document.createElement('span');
-  label.textContent = `${node.id}: ${node.title}`;
+  const labelWrap = document.createElement('span');
+  const depthPill = document.createElement('span');
+  depthPill.className = 'bv-depth-pill';
+  depthPill.textContent = `L${node.depth ?? 0}`;
+  const labelText = document.createElement('span');
+  labelText.textContent = `${node.id}: ${node.title}`;
+  labelWrap.append(depthPill, labelText);
 
   const meta = document.createElement('span');
   meta.className = 'bv-meta';
   meta.textContent = `P${node.priority ?? 2} | ${node.status} (${stats.closed}/${stats.total})`;
 
-  btn.append(label, meta);
+  btn.append(labelWrap, meta);
   btn.addEventListener('click', () => selectIssue(node));
   wrapper.appendChild(btn);
 
@@ -45,6 +50,14 @@ function renderNode(node) {
     wrapper.appendChild(renderNode(child));
   }
   return wrapper;
+}
+
+function appendLabeledParagraph(parent, label, value) {
+  const p = document.createElement('p');
+  const strong = document.createElement('strong');
+  strong.textContent = `${label}: `;
+  p.append(strong, document.createTextNode(value));
+  parent.appendChild(p);
 }
 
 function selectIssue(issue) {
@@ -55,26 +68,48 @@ function selectIssue(issue) {
 
   quoteBtn.disabled = false;
   quotePreview.textContent = '';
+  body.replaceChildren();
 
-  const commentsHtml = (issue.comments || [])
-    .map((c) => `<li><strong>${c.author}:</strong> ${c.text}</li>`)
-    .join('');
+  const heading = document.createElement('h3');
+  heading.textContent = `${issue.id} - ${issue.title}`;
+  body.appendChild(heading);
 
-  body.innerHTML = `
-    <h3>${issue.id} — ${issue.title}</h3>
-    <p><strong>Status:</strong> ${issue.status} | <strong>Priority:</strong> P${issue.priority ?? 2}</p>
-    <p>${issue.description || 'No description.'}</p>
-    <p><strong>Acceptance:</strong> ${issue.acceptance || 'None'}</p>
-    <p><strong>Notes:</strong> ${issue.notes || 'None'}</p>
-    <div><strong>Comments:</strong><ul>${commentsHtml || '<li>None</li>'}</ul></div>
-  `;
+  appendLabeledParagraph(body, 'Status', `${issue.status} | Priority: P${issue.priority ?? 2}`);
+  appendLabeledParagraph(body, 'Description', issue.description || 'No description.');
+  appendLabeledParagraph(body, 'Acceptance', issue.acceptance || 'None');
+  appendLabeledParagraph(body, 'Notes', issue.notes || 'None');
+
+  const commentsWrap = document.createElement('div');
+  const commentsTitle = document.createElement('strong');
+  commentsTitle.textContent = 'Comments:';
+  const list = document.createElement('ul');
+  const comments = issue.comments || [];
+  if (comments.length === 0) {
+    const emptyItem = document.createElement('li');
+    emptyItem.textContent = 'None';
+    list.appendChild(emptyItem);
+  } else {
+    for (const c of comments) {
+      const item = document.createElement('li');
+      const author = document.createElement('strong');
+      author.textContent = `${c.author}: `;
+      item.append(author, document.createTextNode(c.text));
+      list.appendChild(item);
+    }
+  }
+  commentsWrap.append(commentsTitle, list);
+  body.appendChild(commentsWrap);
 }
 
 async function loadAndRender() {
   const res = await fetch('/api/snapshot');
   currentSnapshot = await res.json();
 
-  const badge = document.getElementById('bv-workspace-badge') || document.querySelector('[data-testid="bv-workspace-badge"]');
+  const envBanner = document.querySelector('[data-testid="bv-env-banner"]');
+  envBanner.textContent =
+    currentSnapshot.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Workspace';
+
+  const badge = document.querySelector('[data-testid="bv-workspace-badge"]');
   badge.textContent = `${currentSnapshot.workspace} (${currentSnapshot.testEnv})`;
 
   const treeContainer = document.getElementById('epic-tree');
