@@ -77,9 +77,12 @@ export function groupLaneItems(
   }
 
   for (const item of items) {
+    const parentDep = (item.dependencies || []).find(
+      (d) => (d.type || '') === 'parent-child' && d.depends_on_id
+    )?.depends_on_id;
     const key =
       groupBy === 'epic'
-        ? item.parent || 'No Epic'
+        ? item.parent || parentDep || 'No Epic'
         : item.assignee || 'Unassigned';
     const bucket = groups.get(key) || [];
     bucket.push(item);

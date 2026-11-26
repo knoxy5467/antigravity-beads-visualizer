@@ -9,7 +9,7 @@
       "priority": 0,
       "assignee": "agent-alpha",
       "description": "Coordinate nested sub-epics and expansion tasks for the synthetic demo workspace.",
-      "acceptance": "All sub-epics and tasks reach closed status after verified tests.",
+      "acceptance_criteria": "All sub-epics and tasks reach closed status after verified tests.",
       "design": "docs/specs/sample-view.md",
       "notes": "COMPLETED: Initialized synthetic fixture. | IN PROGRESS: Sub-epic tree rendering. | NEXT: Verify inspector and quote bridge. | BLOCKERS: None. | KEY DECISION: Read-only data adapter. | REFERENCE: docs/specs/sample-view.md",
       "dependencies": [],
@@ -29,9 +29,25 @@
       "priority": 1,
       "assignee": "agent-beta",
       "description": "Render nested epics, priority tags, and dependency edges.",
-      "acceptance": "Tree expands and collapses cleanly across three levels.",
+      "acceptance_criteria": "Tree expands and collapses cleanly across three levels.",
       "design": "docs/specs/sample-view.md",
-      "notes": "COMPLETED: Tree schema defined. | IN PROGRESS: DAG edge badges. | NEXT: Add Playwright assertions.",
+      "notes": "COMPLETED: Tree schema defined. | IN PROGRESS: DAG edge badges. | NEXT: Add Playwright assertions. | BLOCKERS: None. | KEY DECISION: Deterministic column layout. | REFERENCE: docs/specs/sample-view.md",
+      "dependencies": [
+        { "depends_on_id": "bv-meta-demo", "type": "parent-child" }
+      ],
+      "comments": []
+    },
+    {
+      "id": "bv-sub-gates",
+      "title": "Sub-Epic: Gates and Agent Approvals",
+      "issue_type": "epic",
+      "status": "open",
+      "priority": 1,
+      "assignee": "agent-gamma",
+      "description": "Track open gates, blocker chips, and agent approval messages.",
+      "acceptance_criteria": "All gates show blocker status and support quote or message actions.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Gate protocol drafted. | IN PROGRESS: Approval UI panel. | NEXT: Verify gate actions. | BLOCKERS: bv-task-inspector. | KEY DECISION: Read-only visualizer with host bridge actions. | REFERENCE: docs/specs/sample-view.md",
       "dependencies": [
         { "depends_on_id": "bv-meta-demo", "type": "parent-child" }
       ],
@@ -45,11 +61,45 @@
       "priority": 1,
       "assignee": "agent-alpha",
       "description": "Display meta-epics, sub-epics, and leaf tasks with completion bars.",
-      "acceptance": "All three levels appear in the DOM with accurate counts.",
+      "acceptance_criteria": "All three levels appear in the DOM with accurate counts.",
       "design": "docs/specs/sample-view.md",
-      "notes": "COMPLETED: Recursive tree component verified. | IN PROGRESS: None. | NEXT: Close task.",
+      "notes": "COMPLETED: Recursive tree component verified. | IN PROGRESS: None. | NEXT: Close task. | BLOCKERS: None. | KEY DECISION: Safe DOM APIs only. | REFERENCE: docs/specs/sample-view.md",
       "dependencies": [
         { "depends_on_id": "bv-sub-tree", "type": "parent-child" }
+      ],
+      "comments": []
+    },
+    {
+      "id": "bv-task-inspector",
+      "title": "Render issue inspector and quote copy",
+      "issue_type": "task",
+      "status": "in_progress",
+      "priority": 1,
+      "assignee": "agent-alpha",
+      "description": "Show acceptance criteria, six-key notes, comments, and quote payload.",
+      "acceptance_criteria": "Clicking a bead opens the inspector and prepares a quote pill.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Layout ready. | IN PROGRESS: Quote pill action. | NEXT: Run Playwright. | BLOCKERS: None. | KEY DECISION: Structured six-key grid. | REFERENCE: docs/specs/sample-view.md",
+      "dependencies": [
+        { "depends_on_id": "bv-sub-tree", "type": "parent-child" },
+        { "depends_on_id": "bv-task-tree-ui", "type": "relates-to" }
+      ],
+      "comments": []
+    },
+    {
+      "id": "bv-task-ready-polish",
+      "title": "Polish workflow lane grouping",
+      "issue_type": "task",
+      "status": "open",
+      "priority": 2,
+      "assignee": "agent-gamma",
+      "description": "Group ready, active, blocked, and closed items by epic or assignee.",
+      "acceptance_criteria": "Board renders all four lanes with group-by selector.",
+      "design": "docs/specs/sample-view.md",
+      "notes": "COMPLETED: Lane helper tested. | IN PROGRESS: Board view wiring. | NEXT: Capture board screenshot. | BLOCKERS: None. | KEY DECISION: Pure lane classifier. | REFERENCE: docs/specs/sample-view.md",
+      "dependencies": [
+        { "depends_on_id": "bv-sub-tree", "type": "parent-child" },
+        { "depends_on_id": "bv-task-tree-ui", "type": "discovered-from" }
       ],
       "comments": []
     },
@@ -61,11 +111,11 @@
       "priority": 0,
       "assignee": "agent-beta",
       "description": "Wait for synthetic CI checks and quote pill verification.",
-      "acceptance": "Gate resolves after CI and Playwright pass.",
+      "acceptance_criteria": "Gate resolves after CI and Playwright pass.",
       "design": "docs/specs/sample-view.md",
-      "notes": "COMPLETED: Gate created. | IN PROGRESS: Waiting on bv-task-inspector. | NEXT: Resolve gate.",
+      "notes": "COMPLETED: Gate created. | IN PROGRESS: Waiting on bv-task-inspector. | NEXT: Resolve gate. | BLOCKERS: bv-task-inspector. | KEY DECISION: Synthetic gate fixture. | REFERENCE: docs/specs/sample-view.md",
       "dependencies": [
-        { "depends_on_id": "bv-sub-tree", "type": "parent-child" },
+        { "depends_on_id": "bv-sub-gates", "type": "parent-child" },
         { "depends_on_id": "bv-task-inspector", "type": "blocks" }
       ],
       "comments": [
@@ -77,18 +127,18 @@
       ]
     },
     {
-      "id": "bv-task-inspector",
-      "title": "Render issue inspector and quote copy",
-      "issue_type": "task",
-      "status": "in_progress",
+      "id": "bv-gate-resolved-demo",
+      "title": "Gate: Synthetic Design Sign-Off",
+      "issue_type": "gate",
+      "status": "closed",
       "priority": 1,
-      "assignee": "agent-alpha",
-      "description": "Show acceptance criteria, six-key notes, comments, and quote payload.",
-      "acceptance": "Clicking a bead opens the inspector and prepares a quote pill.",
+      "assignee": "agent-gamma",
+      "description": "Verify initial synthetic design specification approval.",
+      "acceptance_criteria": "Design critic approves synthetic spec.",
       "design": "docs/specs/sample-view.md",
-      "notes": "COMPLETED: Layout ready. | IN PROGRESS: Quote pill action. | NEXT: Run Playwright.",
+      "notes": "COMPLETED: Design sign-off approved. | IN PROGRESS: None. | NEXT: None. | BLOCKERS: None. | KEY DECISION: Approved baseline. | REFERENCE: docs/specs/sample-view.md",
       "dependencies": [
-        { "depends_on_id": "bv-sub-tree", "type": "parent-child" }
+        { "depends_on_id": "bv-sub-gates", "type": "parent-child" }
       ],
       "comments": []
     }

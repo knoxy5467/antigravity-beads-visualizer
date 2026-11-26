@@ -67,7 +67,7 @@ test('loadBeadsSnapshot reads synthetic fixture without invoking bd CLI', async 
   });
   assert.equal(snap.testEnv, 'synthetic');
   assert.equal(snap.workspace, '/synthetic/workspace/beads-demo');
-  assert.equal(snap.issues.length, 5);
+  assert.equal(snap.issues.length, 8);
   assert.ok(Array.isArray(snap.blocked));
   assert.ok(snap.stats !== undefined);
   assert.ok(snap.etag.length > 0);
@@ -102,7 +102,7 @@ test('createStandaloneServer serves health, workspaces, snapshot etag, and rejec
     assert.deepEqual(ws.workspaces, ['/synthetic/workspace/beads-demo']);
 
     const snap = (await (await fetch(`${base}/api/snapshot`)).json()) as { etag: string; issues: unknown[] };
-    assert.equal(snap.issues.length, 5);
+    assert.equal(snap.issues.length, 8);
 
     const unchanged = (await (await fetch(`${base}/api/snapshot?etag=${snap.etag}`)).json()) as { unchanged: boolean };
     assert.equal(unchanged.unchanged, true);
