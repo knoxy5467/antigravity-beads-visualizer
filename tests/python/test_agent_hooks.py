@@ -76,3 +76,23 @@ def test_pre_tool_gate_enforces_typescript_for_project_dirs(tmp_path: Path) -> N
         )
         assert res["decision"] == "deny"
         assert "TypeScript" in res["reason"]
+
+
+def test_get_in_progress_beads_uses_fresh_cache(tmp_path: Path) -> None:
+    """Verify get_in_progress_beads reads active beads from fresh cache."""
+    import json
+    import time
+
+    from _common import get_in_progress_beads
+
+    beads_dir = tmp_path / ".beads"
+    beads_dir.mkdir()
+    cache_file = beads_dir / ".hook_active_cache.json"
+    cache_file.write_text(
+        json.dumps({"ts": time.time(), "active": [{"id": "bv-cached-1"}]}),
+        encoding="utf-8",
+    )
+    ok, active, err = get_in_progress_beads(tmp_path)
+    assert ok is True
+    assert err == ""
+    assert active[0]["id"] == "bv-cached-1"

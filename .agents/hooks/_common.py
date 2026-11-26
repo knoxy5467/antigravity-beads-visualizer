@@ -109,7 +109,7 @@ def get_in_progress_beads(cwd: Path = REPO_ROOT) -> tuple[bool, list[dict[str, A
     if cache_file.is_file():
         try:
             cached = json.loads(cache_file.read_text(encoding="utf-8"))
-            if time.time() - float(cached.get("ts", 0)) < 120 and cached.get("active"):
+            if time.time() - float(cached.get("ts", 0)) < 1800 and cached.get("active"):
                 return True, cached["active"], ""
         except (OSError, ValueError, json.JSONDecodeError):
             pass
