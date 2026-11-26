@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
+  BD_EXEC_OPTIONS,
   computeStatsFallback,
   createStandaloneServer,
+  deriveBlockedEntries,
   isValidBeadId,
   listBeadsWorkspaces,
   loadBeadsSnapshot,
@@ -141,4 +143,29 @@ test('listBeadsWorkspaces discovers directories containing .beads via BEADS_WORK
     if (prevFixture !== undefined) process.env.BEADS_FIXTURE_PATH = prevFixture;
     rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test('BD_EXEC_OPTIONS configures 45s timeout and 10 MiB maxBuffer', () => {
+  assert.ok(BD_EXEC_OPTIONS.timeout >= 45000);
+  assert.ok(BD_EXEC_OPTIONS.maxBuffer >= 10 * 1024 * 1024);
+});
+
+test('deriveBlockedEntries extracts open issues with unresolved blocks dependencies', () => {
+  const blocked = deriveBlockedEntries([
+    { id: 'bv-1', title: 'Closed Blocker', status: 'closed' },
+    { id: 'bv-2', title: 'Open Blocker', status: 'open' },
+    {
+      id: 'bv-3',
+      title: 'Blocked Task',
+      status: 'open',
+      priority: 1,
+      dependencies: [
+        { depends_on_id: 'bv-1', type: 'blocks' },
+        { depends_on_id: 'bv-2', type: 'blocks' },
+      ],
+    },
+  ]);
+  assert.equal(blocked.length, 1);
+  assert.equal(blocked[0]?.id, 'bv-3');
+  assert.deepEqual(blocked[0]?.blocked_by, ['bv-2']);
 });
