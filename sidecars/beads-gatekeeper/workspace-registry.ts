@@ -34,6 +34,8 @@ function sanitizeWorkspaceEntry(entry: Partial<OptInWorkspaceConfig>): OptInWork
     workspacePath: resolvedPath,
     autoStartDolt: Boolean(entry.autoStartDolt),
     autoCheckGates: Boolean(entry.autoCheckGates),
+    autoDriveWorkflows: Boolean(entry.autoDriveWorkflows),
+    defaultWorkflowRuntime: entry.defaultWorkflowRuntime === 'agy' ? 'agy' : 'desktop',
     pollIntervalMs:
       typeof entry.pollIntervalMs === 'number' && entry.pollIntervalMs >= 1000
         ? Math.floor(entry.pollIntervalMs)

@@ -18,6 +18,7 @@ from _common import (  # noqa: E402
     get_staged_files,
     is_exempt_path,
     read_hook_input,
+    record_gate_hook_event,
 )
 
 FORBIDDEN_STAGED_PREFIXES = (
@@ -58,6 +59,13 @@ def evaluate_stop(payload: dict[str, Any], repo_root: Path = REPO_ROOT) -> dict[
             violations.append("Record six-key notes on your active bead or close it before stopping.")
 
     if violations:
+        record_gate_hook_event(
+            hook_name="stop-gate",
+            status="failed",
+            workspace_path=repo_root,
+            exit_code=1,
+            detail=" ".join(violations),
+        )
         return {"decision": "continue", "reason": " ".join(violations)}
     return {"decision": "allow"}
 

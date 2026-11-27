@@ -760,6 +760,35 @@ def check_pr_ready(pr_number: str, repo_root: Path = REPO_ROOT, wait_seconds: in
         time.sleep(10)
 
 
+def _record_sdlc_hook_event(command: str, repo_root: Path, ok: bool, detail: str = "") -> None:
+    """Append a gate hook result to hook-events.jsonl when running git or PR gates."""
+    import uuid
+    from datetime import datetime, timezone
+
+    try:
+        override = os.environ.get("BEADS_PLUGIN_DATA") or os.environ.get("PLUGIN_DATA")
+        data_dir = (
+            Path(override.strip()).resolve()
+            if override and override.strip()
+            else Path.home() / ".gemini" / "antigravity" / "plugin_data" / "beads-visualizer"
+        )
+        data_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "id": f"hk-{uuid.uuid4().hex[:10]}",
+            "hookName": command,
+            "workspacePath": str(repo_root),
+            "status": "passed" if ok else "failed",
+            "exitCode": 0 if ok else 1,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if detail:
+            payload["detail"] = detail[:500]
+        with (data_dir / "hook-events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except OSError:
+        return
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run CLI subcommands for tools.sdlc_gate."""
     parser = argparse.ArgumentParser(description="Run SDLC verification gates.")
@@ -822,6 +851,15 @@ def main(argv: list[str] | None = None) -> int:
         res = {"ok": bool(chk["ok"]), "checks": [chk]}
     else:
         raise ValueError(f"Unsupported command: {args.command}")
+
+    if args.command in {"git-pre-commit", "git-commit-msg", "git-pre-push", "pr-gate"}:
+        failed = [
+            f"{chk.get('name')}: {chk.get('detail', '')}"
+            for chk in res.get("checks", [])
+            if isinstance(chk, dict) and not chk.get("ok")
+        ]
+        target_root = getattr(args, "repo_root", REPO_ROOT).resolve()
+        _record_sdlc_hook_event(args.command, target_root, bool(res.get("ok")), "; ".join(failed))
 
     sys.stdout.write(json.dumps(res, indent=2) + "\n")
     return 0 if res.get("ok") else 1

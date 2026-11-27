@@ -19,13 +19,17 @@ import { existsSync } from 'node:fs';
 import { appendFile, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { SidecarCommand, SidecarStateSnapshot } from './types.js';
+import type { GateHookEvent, SidecarCommand, SidecarStateSnapshot } from './types.js';
 
 const EMPTY_STATE: SidecarStateSnapshot = {
   updatedAt: '',
   doltStates: [],
   gateStates: [],
   agents: [],
+  monitoredGates: [],
+  hookEvents: [],
+  workflowRuns: [],
+  notifiedKeys: [],
 };
 
 /**
@@ -47,12 +51,14 @@ export class SidecarStateStore {
   readonly configPath: string;
   readonly statePath: string;
   readonly commandsPath: string;
+  readonly hookEventsPath: string;
 
   constructor(dataDir: string = resolvePluginDataDir()) {
     this.dataDir = resolve(dataDir);
     this.configPath = join(this.dataDir, 'config.json');
     this.statePath = join(this.dataDir, 'state.json');
     this.commandsPath = join(this.dataDir, 'commands.jsonl');
+    this.hookEventsPath = join(this.dataDir, 'hook-events.jsonl');
   }
 
   /**
@@ -68,9 +74,14 @@ export class SidecarStateStore {
       return {
         updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
         daemonPid: typeof parsed.daemonPid === 'number' ? parsed.daemonPid : undefined,
+        restartedAt: typeof parsed.restartedAt === 'string' ? parsed.restartedAt : undefined,
         doltStates: Array.isArray(parsed.doltStates) ? parsed.doltStates : [],
         gateStates: Array.isArray(parsed.gateStates) ? parsed.gateStates : [],
         agents: Array.isArray(parsed.agents) ? parsed.agents : [],
+        monitoredGates: Array.isArray(parsed.monitoredGates) ? parsed.monitoredGates : [],
+        hookEvents: Array.isArray(parsed.hookEvents) ? parsed.hookEvents : [],
+        workflowRuns: Array.isArray(parsed.workflowRuns) ? parsed.workflowRuns : [],
+        notifiedKeys: Array.isArray(parsed.notifiedKeys) ? parsed.notifiedKeys : [],
       };
     } catch {
       return { ...EMPTY_STATE };
@@ -99,32 +110,61 @@ export class SidecarStateStore {
    * Drain and clear all queued sidecar commands.
    */
   async drainCommands(): Promise<SidecarCommand[]> {
-    if (!existsSync(this.commandsPath)) {
+    return this.drainJsonLines<SidecarCommand>(
+      this.commandsPath,
+      (item): item is SidecarCommand => Boolean(item && typeof item === 'object' && typeof (item as { type?: unknown }).type === 'string')
+    );
+  }
+
+  /**
+   * Append one gate hook event to the sidecar telemetry queue.
+   */
+  async appendHookEvent(event: GateHookEvent): Promise<void> {
+    await mkdir(this.dataDir, { recursive: true });
+    await appendFile(this.hookEventsPath, `${JSON.stringify(event)}\n`, 'utf-8');
+  }
+
+  /**
+   * Drain and clear all queued gate hook events.
+   */
+  async drainHookEvents(): Promise<GateHookEvent[]> {
+    return this.drainJsonLines<GateHookEvent>(
+      this.hookEventsPath,
+      (item): item is GateHookEvent =>
+        Boolean(item && typeof item === 'object' && typeof (item as { id?: unknown }).id === 'string')
+    );
+  }
+
+  private async drainJsonLines<T>(
+    targetPath: string,
+    isValid: (item: unknown) => item is T
+  ): Promise<T[]> {
+    if (!existsSync(targetPath)) {
       return [];
     }
-    const processingPath = `${this.commandsPath}.processing-${process.pid}-${Date.now()}`;
+    const processingPath = `${targetPath}.processing-${process.pid}-${Date.now()}`;
     try {
-      await rename(this.commandsPath, processingPath);
+      await rename(targetPath, processingPath);
     } catch {
       return [];
     }
     try {
       const raw = await readFile(processingPath, 'utf-8');
-      const commands: SidecarCommand[] = [];
+      const items: T[] = [];
       for (const line of raw.split(/\r?\n/)) {
         const trimmed = line.trim();
         if (!trimmed) continue;
         try {
-          const parsed = JSON.parse(trimmed) as SidecarCommand;
-          if (parsed && typeof parsed.type === 'string') {
-            commands.push(parsed);
+          const parsed = JSON.parse(trimmed) as unknown;
+          if (isValid(parsed)) {
+            items.push(parsed);
           }
         } catch {
-          // Skip malformed command lines without blocking valid commands.
+          // Skip malformed JSON lines without blocking valid entries.
         }
       }
       await writeFile(processingPath, '', 'utf-8');
-      return commands;
+      return items;
     } catch {
       return [];
     }

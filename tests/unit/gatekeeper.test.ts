@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { GatekeeperEngine } from '../../sidecars/beads-gatekeeper/gatekeeper.js';
 import { SidecarStateStore } from '../../sidecars/beads-gatekeeper/state-store.js';
@@ -133,4 +133,147 @@ test('GatekeeperEngine skips disabled or unhealthy workspaces and deduplicates w
   await engine.resolveHumanGate('/synthetic/repo-a', 'bv-gate-human', 'Approved by user');
   assert.ok(calls.some((c) => c.includes('gate resolve bv-gate-human --reason Approved by user --json')));
   await assert.rejects(() => engine.resolveHumanGate('/synthetic/repo-a', 'add', 'Bad ID'));
+});
+
+test('SidecarStateStore persists extended restart fields and drains hook-events.jsonl', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'bv-hook-store-'));
+  try {
+    const store = new SidecarStateStore(dataDir);
+    await store.writeState({
+      updatedAt: '2026-11-27T01:00:00Z',
+      daemonPid: 4321,
+      restartedAt: '2026-11-27T01:00:00Z',
+      doltStates: [],
+      gateStates: [],
+      agents: [],
+      monitoredGates: [
+        {
+          workspacePath: '/synthetic/repo-a',
+          gateId: 'bv-gate-open-1',
+          status: 'monitoring',
+          waiters: ['conv-1'],
+          lastCheckedAt: '2026-11-27T00:59:00Z',
+        },
+      ],
+      hookEvents: [
+        {
+          id: 'hk-1',
+          hookName: 'pre-push',
+          workspacePath: '/synthetic/repo-a',
+          status: 'started',
+          timestamp: '2026-11-27T00:58:00Z',
+        },
+      ],
+      notifiedKeys: ['/synthetic/repo-a:resolved:bv-gate-ci:conv-101'],
+      workflowRuns: [],
+    });
+
+    const loaded = await store.readState();
+    assert.equal(loaded.restartedAt, '2026-11-27T01:00:00Z');
+    assert.equal(loaded.monitoredGates?.length, 1);
+    assert.equal(loaded.hookEvents?.length, 1);
+    assert.deepEqual(loaded.notifiedKeys, ['/synthetic/repo-a:resolved:bv-gate-ci:conv-101']);
+
+    await store.appendHookEvent({
+      id: 'hk-2',
+      hookName: 'stop-gate',
+      workspacePath: '/synthetic/repo-a',
+      gateId: 'bv-gate-open-1',
+      status: 'failed',
+      exitCode: 1,
+      detail: 'Missing six-key notes.',
+      timestamp: '2026-11-27T01:00:05Z',
+    });
+
+    const drained = await store.drainHookEvents();
+    assert.equal(drained.length, 1);
+    assert.equal(drained[0]?.id, 'hk-2');
+
+    const drainedAgain = await store.drainHookEvents();
+    assert.equal(drainedAgain.length, 0);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('GatekeeperEngine hydrates monitored gates after restart, checks bd gate list, and times out stalled hooks', async () => {
+  const wsConfig: OptInWorkspaceConfig = {
+    workspacePath: '/synthetic/repo-a',
+    autoStartDolt: true,
+    autoCheckGates: true,
+    pollIntervalMs: 10000,
+    maxConcurrentWorkers: 2,
+  };
+  const healthyDolt: DoltHealthState = {
+    workspacePath: '/synthetic/repo-a',
+    port: 3307,
+    database: 'bv',
+    status: 'running',
+  };
+
+  const notifications: Array<{ waiter: string; gateId: string; status: string }> = [];
+  const calls: string[] = [];
+
+  const engine = new GatekeeperEngine({
+    hookTimeoutMs: 30_000,
+    now: () => '2026-11-27T02:00:00Z',
+    runBd: async (args) => {
+      const cmd = args.join(' ');
+      calls.push(cmd);
+      if (cmd.startsWith('gate list')) {
+        return JSON.stringify([
+          { id: 'bv-gate-open-1', title: 'Wait for CI', await_type: 'gh:run', status: 'open', waiters: ['conv-1'] },
+        ]);
+      }
+      if (cmd.startsWith('gate check')) {
+        return JSON.stringify({
+          resolved: [{ id: 'bv-gate-ci', waiters: ['conv-101'] }],
+          escalated: [],
+        });
+      }
+      return '[]';
+    },
+    notifyWaiter: async (waiter, gateId, status) => {
+      notifications.push({ waiter, gateId, status });
+    },
+  });
+
+  engine.hydrate({
+    monitoredGates: [
+      {
+        workspacePath: '/synthetic/repo-a',
+        gateId: 'bv-gate-open-1',
+        status: 'monitoring',
+        waiters: ['conv-1'],
+        lastCheckedAt: '2026-11-27T01:50:00Z',
+      },
+    ],
+    hookEvents: [
+      {
+        id: 'hk-stalled',
+        hookName: 'pre-push',
+        workspacePath: '/synthetic/repo-a',
+        gateId: 'bv-gate-open-1',
+        status: 'started',
+        timestamp: '2026-11-27T01:58:00Z',
+      },
+    ],
+    notifiedKeys: [
+      `${
+        process.platform === 'win32' ? resolve('/synthetic/repo-a').toLowerCase() : resolve('/synthetic/repo-a')
+      }:resolved:bv-gate-ci:conv-101`,
+    ],
+  });
+
+  const timedOutEvents = engine.ingestHookEvents([], Date.parse('2026-11-27T02:00:00Z'));
+  assert.equal(timedOutEvents.find((e) => e.id === 'hk-stalled')?.status, 'timed_out');
+
+  const state = await engine.runCycleForWorkspace(wsConfig, healthyDolt);
+  assert.ok(calls.some((c) => c.startsWith('gate list')));
+  assert.equal(state.monitoredGates?.length, 1);
+  assert.equal(state.monitoredGates?.[0]?.gateId, 'bv-gate-open-1');
+  assert.equal(state.monitoredGates?.[0]?.rehydrated, true);
+  assert.equal(state.failedHooks?.length, 1);
+  assert.equal(state.failedHooks?.[0]?.status, 'timed_out');
+  assert.equal(notifications.length, 0);
 });

@@ -345,4 +345,53 @@ describe("HybridAgentManager", () => {
     assert.equal(stopped.status, "stopped");
     await manager.stopAll();
   });
+
+  it("sends follow-up messages and hydrates live desktop agents while marking dead agy PIDs stopped", async () => {
+    const sent: Array<{ conversationId: string; prompt: string }> = [];
+    const desktopAdapter = new DesktopAgentAdapter({
+      sidecarSdk: {
+        sendMessage: async (conversationId, prompt) => {
+          sent.push({ conversationId, prompt });
+        },
+      },
+    });
+    const agyAdapter = new AgyCliAgentAdapter();
+
+    const manager = new HybridAgentManager({
+      desktopAdapter,
+      agyAdapter,
+      isPidAlive: (pid) => pid === 4444,
+    });
+
+    manager.hydrateAgents([
+      {
+        id: "agent-desktop-old",
+        runtime: "desktop",
+        beadId: "bv-1",
+        workspacePath: "/synthetic/repo",
+        status: "running",
+        conversationId: "conv-old-1",
+        startedAt: "2026-11-27T00:00:00Z",
+        updatedAt: "2026-11-27T00:05:00Z",
+      },
+      {
+        id: "agent-agy-dead",
+        runtime: "agy",
+        beadId: "bv-2",
+        workspacePath: "/synthetic/repo",
+        status: "running",
+        pid: 9999,
+        startedAt: "2026-11-27T00:00:00Z",
+        updatedAt: "2026-11-27T00:05:00Z",
+      },
+    ]);
+
+    const hydrated = manager.getAgents();
+    assert.equal(hydrated.find((a) => a.id === "agent-desktop-old")?.status, "running");
+    assert.equal(hydrated.find((a) => a.id === "agent-agy-dead")?.status, "stopped");
+
+    await manager.sendMessageToAgent("conv-old-1", "Gate resolved; continue.");
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0]?.conversationId, "conv-old-1");
+  });
 });
