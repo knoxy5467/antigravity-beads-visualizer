@@ -32,6 +32,8 @@ import type {
   BeadStatsSummary,
 } from '../core/graph.js';
 import { buildWorkflowLanes } from '../core/lanes.js';
+import { resolvePluginDataDir, SidecarStateStore } from '../../sidecars/beads-gatekeeper/state-store.js';
+import type { ManagedAgentRuntime, SidecarStateSnapshot } from '../../sidecars/beads-gatekeeper/types.js';
 
 const execFileAsync = promisify(execFile);
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -439,6 +441,39 @@ export async function validateWorkspaceParam(
   return normalized ?? null;
 }
 
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  const raw = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!raw) {
+    return {};
+  }
+  return JSON.parse(raw) as Record<string, unknown>;
+}
+
+/**
+ * Load sidecar status from synthetic fixture when configured, or from PLUGIN_DATA state.json.
+ */
+export async function loadSidecarStatus(options: { fixturePath?: string } = {}): Promise<SidecarStateSnapshot> {
+  const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH;
+  if (fixturePath) {
+    const raw = await readFile(resolve(process.cwd(), fixturePath), 'utf-8');
+    const parsed = JSON.parse(raw) as { sidecar?: SidecarStateSnapshot };
+    if (parsed.sidecar) {
+      return parsed.sidecar;
+    }
+    return {
+      updatedAt: new Date(0).toISOString(),
+      doltStates: [],
+      gateStates: [],
+      agents: [],
+    };
+  }
+  return new SidecarStateStore(resolvePluginDataDir()).readState();
+}
+
 /**
  * Create the standalone HTTP server instance.
  */
@@ -450,6 +485,95 @@ export function createStandaloneServer(): http.Server {
     if (urlPath === '/api/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (urlPath === '/api/sidecar/status' && req.method === 'GET') {
+      try {
+        const status = await loadSidecarStatus();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(status));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
+      }
+      return;
+    }
+
+    if (urlPath === '/api/sidecar/resolve-gate' && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const gateId = typeof body.gateId === 'string' ? body.gateId.trim() : '';
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+        if (!isValidBeadId(gateId) || !reason) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Valid gateId and non-empty reason are required.' }));
+          return;
+        }
+        const workspace = await validateWorkspaceParam(
+          typeof body.workspace === 'string' ? body.workspace : null
+        );
+        if (workspace === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
+          return;
+        }
+        if (!process.env.BEADS_FIXTURE_PATH) {
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'resolve_gate',
+            workspacePath: workspace ?? process.cwd(),
+            gateId,
+            reason,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, queued: true, gateId, workspace: workspace ?? null }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
+      }
+      return;
+    }
+
+    if (urlPath === '/api/sidecar/spawn-agent' && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const beadId = typeof body.beadId === 'string' ? body.beadId.trim() : '';
+        const runtime =
+          body.runtime === 'desktop' || body.runtime === 'agy'
+            ? (body.runtime as ManagedAgentRuntime)
+            : null;
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+        if (!isValidBeadId(beadId) || !runtime || !prompt) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Valid beadId, runtime, and non-empty prompt are required.' }));
+          return;
+        }
+        const workspace = await validateWorkspaceParam(
+          typeof body.workspace === 'string' ? body.workspace : null
+        );
+        if (workspace === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
+          return;
+        }
+        if (!process.env.BEADS_FIXTURE_PATH) {
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'spawn_agent',
+            workspacePath: workspace ?? process.cwd(),
+            beadId,
+            runtime,
+            prompt,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, queued: true, beadId, runtime, workspace: workspace ?? null }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
+      }
       return;
     }
 

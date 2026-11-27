@@ -26,6 +26,7 @@ import {
   type BeadIssue,
   type BeadSnapshot,
 } from '../core/graph.js';
+import type { ManagedAgentRuntime, SidecarStateSnapshot } from '../../sidecars/beads-gatekeeper/types.js';
 
 export interface SnapshotResponse extends BeadSnapshot {
   unchanged?: boolean;
@@ -36,6 +37,14 @@ export interface HostBridge {
   fetchWorkspaces(): Promise<string[]>;
   fetchSnapshot(etag?: string, workspace?: string): Promise<SnapshotResponse>;
   fetchIssueComments(id: string, workspace?: string): Promise<BeadComment[]>;
+  fetchSidecarStatus(): Promise<SidecarStateSnapshot>;
+  resolveGate(gateId: string, reason: string, workspace?: string): Promise<string>;
+  spawnAgent(
+    beadId: string,
+    runtime: ManagedAgentRuntime,
+    prompt: string,
+    workspace?: string
+  ): Promise<string>;
   quoteBead(issue: BeadIssue): Promise<string>;
   sendAgentMessage(text: string, target?: 'current' | 'new'): Promise<string>;
 }
@@ -157,6 +166,44 @@ function createEmbeddedMcpBridge(): HostBridge {
       return Array.isArray(data.comments) ? data.comments : [];
     },
 
+    async fetchSidecarStatus(): Promise<SidecarStateSnapshot> {
+      const app = await getApp();
+      const result = await app.callServerTool({
+        name: 'beads_gate_monitor_status',
+        arguments: {},
+      });
+      return parseToolPayload<SidecarStateSnapshot>(result);
+    },
+
+    async resolveGate(gateId: string, reason: string, workspace?: string): Promise<string> {
+      const app = await getApp();
+      const args: Record<string, unknown> = { gateId, reason };
+      if (workspace) args.workspace = workspace;
+      const result = await app.callServerTool({
+        name: 'beads_resolve_gate',
+        arguments: args,
+      });
+      parseToolPayload<{ ok?: boolean }>(result);
+      return `Queued gate resolution for ${gateId}.`;
+    },
+
+    async spawnAgent(
+      beadId: string,
+      runtime: ManagedAgentRuntime,
+      prompt: string,
+      workspace?: string
+    ): Promise<string> {
+      const app = await getApp();
+      const args: Record<string, unknown> = { beadId, runtime, prompt };
+      if (workspace) args.workspace = workspace;
+      const result = await app.callServerTool({
+        name: 'beads_spawn_agent',
+        arguments: args,
+      });
+      parseToolPayload<{ ok?: boolean }>(result);
+      return `Queued ${runtime} worker for ${beadId}.`;
+    },
+
     async quoteBead(issue: BeadIssue): Promise<string> {
       const payload = formatQuotePayload(issue);
       const app = await getApp();
@@ -232,6 +279,43 @@ export function createHostBridge(): HostBridge {
       }
       const data = (await res.json()) as { comments?: BeadComment[] };
       return Array.isArray(data.comments) ? data.comments : [];
+    },
+
+    async fetchSidecarStatus(): Promise<SidecarStateSnapshot> {
+      const res = await fetch('/api/sidecar/status');
+      if (!res.ok) {
+        throw new Error(await readHttpError(res));
+      }
+      return (await res.json()) as SidecarStateSnapshot;
+    },
+
+    async resolveGate(gateId: string, reason: string, workspace?: string): Promise<string> {
+      const res = await fetch('/api/sidecar/resolve-gate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gateId, reason, workspace }),
+      });
+      if (!res.ok) {
+        throw new Error(await readHttpError(res));
+      }
+      return `Queued gate resolution for ${gateId}.`;
+    },
+
+    async spawnAgent(
+      beadId: string,
+      runtime: ManagedAgentRuntime,
+      prompt: string,
+      workspace?: string
+    ): Promise<string> {
+      const res = await fetch('/api/sidecar/spawn-agent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ beadId, runtime, prompt, workspace }),
+      });
+      if (!res.ok) {
+        throw new Error(await readHttpError(res));
+      }
+      return `Queued ${runtime} worker for ${beadId}.`;
     },
 
     async quoteBead(issue: BeadIssue): Promise<string> {

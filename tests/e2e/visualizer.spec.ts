@@ -339,4 +339,24 @@ test.describe('Beads Visualizer 4-Tab Prototype', () => {
     await expect(page.getByTestId('bv-action-status')).toContainText('Transient Dolt timeout.', { timeout: 8000 });
     await expect(page.getByTestId('bv-action-status')).toHaveText('', { timeout: 8000 });
   });
+
+  test('renders sidecar monitor, managed agents, and dispatches resolve and spawn controls', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('auto-poll-toggle').uncheck();
+    await page.getByTestId('tab-gates').click();
+
+    await expect(page.getByTestId('bv-sidecar-status')).toContainText('running');
+    await expect(page.getByTestId('bv-sidecar-status')).toContainText('3307');
+    await expect(page.getByTestId('bv-sidecar-agents')).toContainText('agent-syn-1');
+    await expect(page.getByTestId('bv-sidecar-agents')).toContainText('agent-syn-2');
+
+    await page.getByTestId('gate-resolve-bv-task-gate-check').click();
+    await expect(page.getByTestId('bv-action-status')).toContainText('bv-task-gate-check');
+
+    await page.getByTestId('sidecar-spawn-bead').fill('bv-task-inspector');
+    await page.getByTestId('sidecar-spawn-btn').click();
+    await expect(page.getByTestId('bv-action-status')).toContainText('bv-task-inspector');
+
+    await page.screenshot({ path: 'test-results/pr-media/synthetic-sidecar-gates.png', fullPage: true });
+  });
 });

@@ -28,8 +28,10 @@ import {
   listBeadsWorkspaces,
   loadBeadsSnapshot,
   loadIssueComments,
+  loadSidecarStatus,
   validateWorkspaceParam,
 } from '../standalone/server.js';
+import { resolvePluginDataDir, SidecarStateStore } from '../../sidecars/beads-gatekeeper/state-store.js';
 
 export const APP_RESOURCE_URI = 'ui://beads-visualizer/app.html';
 
@@ -267,6 +269,151 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
         };
       } catch (err) {
         return handleToolError('beads_get_issue_comments', err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'beads_gate_monitor_status',
+    {
+      title: 'Get Sidecar Gate Monitor Status',
+      description: 'Return Dolt server, gatekeeper, and managed agent state from the sidecar.',
+      inputSchema: {},
+      _meta: {
+        ui: {
+          resourceUri: APP_RESOURCE_URI,
+          visibility: ['app'],
+        },
+      },
+    },
+    async () => {
+      try {
+        const status = await loadSidecarStatus({ fixturePath: options.fixturePath });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(status) }],
+          structuredContent: status as unknown as Record<string, unknown>,
+        };
+      } catch (err) {
+        return handleToolError('beads_gate_monitor_status', err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'beads_resolve_gate',
+    {
+      title: 'Queue Gate Resolution',
+      description: 'Queue a human gate resolution command for the Beads Gatekeeper sidecar.',
+      inputSchema: {
+        gateId: z.string().describe('Gate issue identifier.'),
+        reason: z.string().min(1).describe('Resolution reason.'),
+        workspace: z.string().optional().describe('Optional Beads workspace path.'),
+      },
+      _meta: {
+        ui: {
+          resourceUri: APP_RESOURCE_URI,
+          visibility: ['app'],
+        },
+      },
+    },
+    async (args) => {
+      try {
+        if (!isValidBeadId(args.gateId)) {
+          return errorResult('Invalid or missing gateId parameter.');
+        }
+        const reason = args.reason.trim();
+        if (!reason) {
+          return errorResult('Reason cannot be empty.');
+        }
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH;
+        if (!fixturePath) {
+          const targetWorkspace = validatedWorkspace ?? options.cwd ?? process.cwd();
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'resolve_gate',
+            workspacePath: targetWorkspace,
+            gateId: args.gateId,
+            reason,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        const payload = {
+          ok: true,
+          queued: true,
+          gateId: args.gateId,
+          workspace: validatedWorkspace ?? null,
+          synthetic: Boolean(fixturePath),
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return handleToolError('beads_resolve_gate', err);
+      }
+    }
+  );
+
+  server.registerTool(
+    'beads_spawn_agent',
+    {
+      title: 'Queue Agent Worker Spawn',
+      description: 'Queue a worker spawn command for desktop or agy runtime.',
+      inputSchema: {
+        beadId: z.string().describe('Bead issue identifier.'),
+        runtime: z.enum(['desktop', 'agy']).describe('Target worker runtime.'),
+        prompt: z.string().min(1).describe('Initial task prompt for the worker.'),
+        workspace: z.string().optional().describe('Optional Beads workspace path.'),
+      },
+      _meta: {
+        ui: {
+          resourceUri: APP_RESOURCE_URI,
+          visibility: ['app'],
+        },
+      },
+    },
+    async (args) => {
+      try {
+        if (!isValidBeadId(args.beadId)) {
+          return errorResult('Invalid or missing beadId parameter.');
+        }
+        const prompt = args.prompt.trim();
+        if (!prompt) {
+          return errorResult('Prompt cannot be empty.');
+        }
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH;
+        if (!fixturePath) {
+          const targetWorkspace = validatedWorkspace ?? options.cwd ?? process.cwd();
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'spawn_agent',
+            workspacePath: targetWorkspace,
+            beadId: args.beadId,
+            runtime: args.runtime,
+            prompt,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        const payload = {
+          ok: true,
+          queued: true,
+          beadId: args.beadId,
+          runtime: args.runtime,
+          workspace: validatedWorkspace ?? null,
+          synthetic: Boolean(fixturePath),
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return handleToolError('beads_spawn_agent', err);
       }
     }
   );
