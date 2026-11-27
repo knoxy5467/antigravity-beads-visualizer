@@ -17,11 +17,12 @@ seeded_questions:
 
 # Beads Visualizer Living Specification
 
-## 1. Read-Only Invariant
+## 1. Read-Only View Boundary and Opt-In Sidecar Automation
 
-The Beads Visualizer must run strictly read-only against `.beads/` databases.
-No server route or MCP tool can mutate, create, claim, or close Beads issues directly.
-User-triggered gate decisions and agent actions route through Antigravity chat (`sendMessage` or `updateModelContext`).
+The Beads Visualizer UI and standalone HTTP server must run strictly read-only against `.beads/` databases.
+No UI render path or read-only snapshot route can mutate, create, claim, or close Beads issues directly.
+User-triggered gate decisions and agent actions route through Antigravity chat (`sendMessage` or `updateModelContext`) or through app-only MCP controls (`visibility: ["app"]`) backed by the `beads-gatekeeper` sidecar.
+The `beads-gatekeeper` sidecar can start Dolt, run `bd gate` maintenance, and dispatch hybrid agents only for explicit opt-in workspaces configured by the user (see ADR-0002).
 
 ## 2. Data Contracts (TypeScript)
 
@@ -58,5 +59,69 @@ Then the Issue Inspector shows six-key notes, acceptance criteria, dependencies,
 ## 4. MCP App Entrypoints and Hidden Data Tools
 
 - Resource: `ui://beads-visualizer/app.html` (`text/html;profile=mcp-app`).
-- Model-visible entrypoint tool: `open_beads_visualizer` with `aux_pane` and `global` entrypoints (`title: "Beads Visualizer"`).
-- App-only tools (`visibility: ["app"]`): `beads_snapshot`, `beads_issue_detail`, `beads_list_workspaces`.
+- Model-visible entrypoint tool: `beads_open_visualizer` with `aux_pane` and `global` entrypoints (`title: "Beads Visualizer"`).
+- App-only read tools (`visibility: ["app"]`): `beads_get_snapshot`, `beads_get_issue_comments`, `beads_list_workspaces`.
+- App-only sidecar control tools (`visibility: ["app"]`): `beads_gate_monitor_status`, `beads_resolve_gate`, `beads_spawn_agent`.
+
+## 5. Sidecar Gatekeeper, Dolt Supervisor, and Hybrid Agent Contracts
+
+### Data Contracts (TypeScript)
+
+```ts
+export interface OptInWorkspaceConfig {
+  workspacePath: string;
+  autoStartDolt: boolean;
+  autoCheckGates: boolean;
+  pollIntervalMs: number;
+  maxConcurrentWorkers: number;
+}
+
+export interface DoltHealthState {
+  workspacePath: string;
+  port: number;
+  database: string;
+  status: 'running' | 'stopped' | 'port_conflict' | 'error';
+  pid?: number;
+  lastError?: string;
+}
+
+export interface GateMonitorState {
+  workspacePath: string;
+  lastRunAt: string;
+  discoveredCount: number;
+  resolvedGates: string[];
+  escalatedGates: string[];
+  readyMolecules: string[];
+}
+
+export interface ManagedAgentRecord {
+  id: string;
+  runtime: 'desktop' | 'agy';
+  beadId: string;
+  workspacePath: string;
+  status: 'running' | 'idle' | 'stalled' | 'quota_exhausted' | 'failed' | 'stopped';
+  pid?: number;
+  conversationId?: string;
+}
+```
+
+### Scenario E: Dolt Supervisor and Port Conflict Guard
+Given an opt-in workspace with `dolt_mode: "server"` and `dolt_server_port: 3307`.
+When port `3307` is free and `autoStartDolt` is `true`.
+Then the sidecar starts `dolt sql-server` for that workspace and reports `status: "running"`.
+When another repository already owns port `3307`.
+Then the sidecar leaves the foreign process untouched and reports `status: "port_conflict"`.
+When `autoStartDolt` is `false` or the workspace is not in the opt-in list.
+Then the sidecar does not start a Dolt process for that repository.
+
+### Scenario F: Deterministic Gate Evaluation and Unblocked Handoff
+Given an opt-in workspace with a healthy database and open gates.
+When the sidecar runs `bd gate discover --json`, `bd gate check --escalate --json`, and `bd mol ready --gated --json`.
+Then the sidecar records resolved and escalated gates in `${PLUGIN_DATA}` and notifies registered waiter conversations.
+
+### Scenario G: Hybrid Agent Dispatch and Stall Detection
+Given a ready Bead or escalated gate and an operator dispatch request.
+When active workers are below `maxConcurrentWorkers` and the sidecar starts a Desktop conversation (`ConversationService`) or a headless `agy` worker.
+Then code tracks `runState`, `transcript.jsonl`, and process exit status and surfaces `stalled` or `quota_exhausted` states in the UI without extra LLM polling turns.
+When active workers equal `maxConcurrentWorkers`.
+Then the sidecar queues or rejects the dispatch until an active worker finishes.
