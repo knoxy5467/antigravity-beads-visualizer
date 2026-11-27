@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import {
   BD_EXEC_OPTIONS,
+  coalesceInFlight,
   computeStatsFallback,
   createStandaloneServer,
   deriveBlockedEntries,
@@ -15,6 +16,7 @@ import {
   listBeadsWorkspaces,
   loadBeadsSnapshot,
   loadIssueComments,
+  parseBdJsonOutput,
   resolveBdExecutable,
   validateWorkspaceParam,
 } from '../../src/standalone/server.js';
@@ -240,4 +242,89 @@ test('formatBdCommandError returns clean actionable errors without raw Command f
   const genericMsg = formatBdCommandError(genericErr);
   assert.doesNotMatch(genericMsg, /Command failed:/);
   assert.match(genericMsg, /permission denied/i);
+
+  const stdoutOnlyErr = Object.assign(new Error('Command failed: /synthetic/bin/bd list --json'), {
+    stderr: '',
+    stdout: 'Error: failed to open database: Dolt server unreachable at 127.0.0.1:3307',
+  });
+  const stdoutOnlyMsg = formatBdCommandError(stdoutOnlyErr);
+  assert.doesNotMatch(stdoutOnlyMsg, /Command failed:/);
+  assert.match(stdoutOnlyMsg, /127\.0\.0\.1:3307/);
+
+  const timeoutErr = Object.assign(new Error('Command failed: /synthetic/bin/bd list --json'), {
+    killed: true,
+    signal: 'SIGTERM',
+    stderr: '',
+    stdout: '',
+  });
+  const timeoutMsg = formatBdCommandError(timeoutErr);
+  assert.doesNotMatch(timeoutMsg, /Command failed:/);
+  assert.match(timeoutMsg, /timed out/i);
+
+  const missingBinErr = Object.assign(new Error('spawn bd ENOENT'), {
+    code: 'ENOENT',
+    stderr: '',
+    stdout: '',
+  });
+  const missingBinMsg = formatBdCommandError(missingBinErr);
+  assert.match(missingBinMsg, /BD_PATH/i);
+
+  const timestampDoltErr = Object.assign(new Error('Command failed: /synthetic/bin/bd list --json'), {
+    stderr: 'time="2026-11-26T15:23:00Z" level=error connectex: connection refused',
+  });
+  const timestampDoltMsg = formatBdCommandError(timestampDoltErr);
+  assert.doesNotMatch(timestampDoltMsg, /15:23/);
+  assert.match(timestampDoltMsg, /Dolt server is not reachable\./);
+});
+
+test('parseBdJsonOutput handles clean JSON, leading CLI warnings, null, and invalid output', () => {
+  assert.deepEqual(parseBdJsonOutput('[{"id":"bv-1"}]'), [{ id: 'bv-1' }]);
+  assert.deepEqual(parseBdJsonOutput(''), []);
+  assert.deepEqual(parseBdJsonOutput('null\n'), []);
+  assert.deepEqual(
+    parseBdJsonOutput('Warning: schema notice on stdout\n[{"id":"bv-2","title":"Valid"}]\n'),
+    [{ id: 'bv-2', title: 'Valid' }]
+  );
+  assert.throws(
+    () => parseBdJsonOutput('Command failed: /synthetic/bin/bd list --json'),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.doesNotMatch(err.message, /Unexpected token/);
+      assert.match(err.message, /non-JSON output/i);
+      return true;
+    }
+  );
+});
+
+test('coalesceInFlight shares one concurrent promise per workspace key and clears after completion', async () => {
+  const inflight = new Map<string, Promise<string>>();
+  let calls = 0;
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const p1 = coalesceInFlight(inflight, 'ws-a', async () => {
+    calls += 1;
+    await firstGate;
+    return `run-${calls}`;
+  });
+  const p2 = coalesceInFlight(inflight, 'ws-a', async () => {
+    calls += 1;
+    return `run-${calls}`;
+  });
+
+  releaseFirst();
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.equal(r1, 'run-1');
+  assert.equal(r2, 'run-1');
+  assert.equal(calls, 1);
+  assert.equal(inflight.size, 0);
+
+  const r3 = await coalesceInFlight(inflight, 'ws-a', async () => {
+    calls += 1;
+    return `run-${calls}`;
+  });
+  assert.equal(r3, 'run-2');
+  assert.equal(calls, 2);
 });

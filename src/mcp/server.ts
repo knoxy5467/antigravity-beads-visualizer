@@ -182,11 +182,15 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
       },
     },
     async () => {
-      const workspaces = await listBeadsWorkspaces(options);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ workspaces }) }],
-        structuredContent: { workspaces },
-      };
+      try {
+        const workspaces = await listBeadsWorkspaces(options);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ workspaces }) }],
+          structuredContent: { workspaces },
+        };
+      } catch (err) {
+        return handleToolError('beads_list_workspaces', err);
+      }
     }
   );
 

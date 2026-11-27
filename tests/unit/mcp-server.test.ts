@@ -169,3 +169,27 @@ test('createBeadsMcpServer catches bd failures and returns clean isError message
     rmSync(emptyWs, { recursive: true, force: true });
   }
 });
+
+test('createBeadsMcpServer catches errors in beads_list_workspaces and returns isError', async () => {
+  const server = createBeadsMcpServer({
+    fixturePath: 'tests/fixtures/does-not-exist-synthetic.json',
+  });
+  const client = new Client({ name: 'test-ws-error-client', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    const res = await client.callTool({
+      name: 'beads_list_workspaces',
+      arguments: {},
+    });
+    assert.equal(res.isError, true);
+    const content = res.content as Array<{ type: string; text?: string }>;
+    const msg = content.find((item) => item.type === 'text')?.text ?? '';
+    assert.ok(msg.length > 0);
+    assert.doesNotMatch(msg, /BD_PATH/i);
+    assert.match(msg, /ENOENT|no such file/i);
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});

@@ -43,6 +43,23 @@ test('parseToolPayload returns structuredContent or parses valid JSON text', () 
     content: [{ type: 'text', text: '{"unchanged":true}' }],
   });
   assert.deepEqual(fromJsonText, { unchanged: true });
+
+  const nullStructuredFallback = parseToolPayload<{ workspaces: string[] }>({
+    structuredContent: null,
+    content: [{ type: 'text', text: '{"workspaces":["/synthetic/ws"]}' }],
+  });
+  assert.deepEqual(nullStructuredFallback, { workspaces: ['/synthetic/ws'] });
+});
+
+test('parseToolPayload throws a clear error when tool returns an empty payload', () => {
+  assert.throws(
+    () => parseToolPayload({ content: [] }),
+    (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /empty response/i);
+      return true;
+    }
+  );
 });
 
 test('readHttpError extracts JSON error fields and falls back cleanly', async () => {

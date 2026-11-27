@@ -32,6 +32,10 @@ let selectedIssue: BeadIssue | null = null;
 let selectedWorkspace = '';
 let activeTab: TabKey = 'tree';
 let pollTimer: number | null = null;
+let autoPollEnabled = true;
+let isRefreshing = false;
+let snapshotRequestId = 0;
+let lastLoadError: string | null = null;
 
 const collapsedIds = new Set<string>();
 const treeFilters: TreeFilterState = {
@@ -58,6 +62,29 @@ function renderLoadError(message: string): void {
   box.dataset.testid = 'bv-load-error';
   box.textContent = message;
   panel.replaceChildren(box);
+}
+
+function resetWorkspaceViewState(): void {
+  currentSnapshot = null;
+  selectedIssue = null;
+  lastLoadError = null;
+
+  const tabKeys: TabKey[] = ['tree', 'dag', 'board', 'gates'];
+  for (const key of tabKeys) {
+    document.getElementById(`view-${key}`)?.replaceChildren();
+  }
+
+  const bodyEl = document.getElementById('inspector-body');
+  if (bodyEl) {
+    bodyEl.textContent = 'Select an epic or task to inspect details.';
+  }
+  const quoteBtn = document.getElementById('quote-btn') as HTMLButtonElement | null;
+  if (quoteBtn) quoteBtn.disabled = true;
+  const quotePreview = document.getElementById('quote-preview');
+  if (quotePreview) quotePreview.textContent = '';
+
+  const badgeEl = document.querySelector('[data-testid="bv-workspace-badge"]');
+  if (badgeEl) badgeEl.textContent = 'loading...';
 }
 
 async function handleQuote(issue: BeadIssue): Promise<void> {
@@ -120,7 +147,12 @@ function switchTab(nextTab: TabKey): void {
 }
 
 function renderAllViews(): void {
-  if (!currentSnapshot) return;
+  if (!currentSnapshot) {
+    if (lastLoadError) {
+      renderLoadError(lastLoadError);
+    }
+    return;
+  }
   const selectedId = selectedIssue ? selectedIssue.id : null;
 
   const treeEl = document.getElementById('view-tree');
@@ -201,16 +233,42 @@ async function loadWorkspaces(): Promise<void> {
   }
 }
 
-async function refreshSnapshot(forceFull = false): Promise<void> {
+function clearPollTimer(): void {
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+}
+
+function scheduleNextPoll(): void {
+  clearPollTimer();
+  if (!autoPollEnabled) return;
+  pollTimer = window.setTimeout(() => {
+    pollTimer = null;
+    void refreshSnapshot(false, true);
+  }, 5000);
+}
+
+async function refreshSnapshot(forceFull = false, fromAutoPoll = false): Promise<void> {
+  if (fromAutoPoll && isRefreshing) {
+    return;
+  }
+
   const badgeEl = document.querySelector('[data-testid="bv-workspace-badge"]');
   const bannerEl = document.querySelector('[data-testid="bv-env-banner"]');
   const statusEl = document.getElementById('action-status');
+  const reqId = ++snapshotRequestId;
+  clearPollTimer();
+  isRefreshing = true;
+
   try {
     const etag = forceFull ? undefined : currentSnapshot?.etag;
     const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
+    if (reqId !== snapshotRequestId) return;
     if (data.unchanged) return;
 
     currentSnapshot = data;
+    lastLoadError = null;
     if (badgeEl) badgeEl.textContent = data.workspace;
     if (bannerEl) {
       bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';
@@ -225,7 +283,9 @@ async function refreshSnapshot(forceFull = false): Promise<void> {
     }
     renderAllViews();
   } catch (err) {
+    if (reqId !== snapshotRequestId) return;
     const message = err instanceof Error ? err.message : String(err);
+    lastLoadError = message;
     setActionStatus(`Snapshot load failed: ${message}`);
     if (badgeEl && (!currentSnapshot || badgeEl.textContent === 'loading...')) {
       badgeEl.textContent = selectedWorkspace || 'unavailable';
@@ -233,18 +293,22 @@ async function refreshSnapshot(forceFull = false): Promise<void> {
     if (!currentSnapshot) {
       renderLoadError(message);
     }
+  } finally {
+    if (reqId === snapshotRequestId) {
+      isRefreshing = false;
+      scheduleNextPoll();
+    }
   }
 }
 
 function updateAutoPoll(enabled: boolean): void {
-  if (pollTimer !== null) {
-    window.clearInterval(pollTimer);
-    pollTimer = null;
+  autoPollEnabled = enabled;
+  if (!enabled) {
+    clearPollTimer();
+    return;
   }
-  if (enabled) {
-    pollTimer = window.setInterval(() => {
-      void refreshSnapshot(false);
-    }, 5000);
+  if (!isRefreshing) {
+    scheduleNextPoll();
   }
 }
 
@@ -283,8 +347,7 @@ function bindEvents(): void {
   const workspaceSelect = document.getElementById('workspace-select') as HTMLSelectElement | null;
   workspaceSelect?.addEventListener('change', () => {
     selectedWorkspace = workspaceSelect.value;
-    currentSnapshot = null;
-    selectedIssue = null;
+    resetWorkspaceViewState();
     void refreshSnapshot(true);
   });
 
@@ -296,10 +359,10 @@ function bindEvents(): void {
 
 async function init(): Promise<void> {
   bindEvents();
+  const autoPollToggle = document.getElementById('auto-poll-toggle') as HTMLInputElement | null;
+  autoPollEnabled = autoPollToggle ? autoPollToggle.checked : true;
   await loadWorkspaces();
   await refreshSnapshot(true);
-  const autoPollToggle = document.getElementById('auto-poll-toggle') as HTMLInputElement | null;
-  updateAutoPoll(autoPollToggle ? autoPollToggle.checked : true);
 }
 
 void init();

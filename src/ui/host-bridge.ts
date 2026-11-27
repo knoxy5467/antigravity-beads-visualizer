@@ -60,7 +60,7 @@ export function parseToolPayload<T>(result: {
   if (result.isError) {
     throw new Error(firstText || 'MCP tool returned an error.');
   }
-  if (result.structuredContent !== undefined) {
+  if (result.structuredContent !== undefined && result.structuredContent !== null) {
     return result.structuredContent as T;
   }
   if (firstText) {
@@ -70,7 +70,7 @@ export function parseToolPayload<T>(result: {
       throw new Error(firstText);
     }
   }
-  return {} as T;
+  throw new Error('MCP tool returned an empty response.');
 }
 
 /**
@@ -102,12 +102,18 @@ function createEmbeddedMcpBridge(): HostBridge {
         if (ctx.theme) applyDocumentTheme(ctx.theme);
         if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
       };
-      appPromise = app.connect().then(() => {
-        const ctx = app.getHostContext();
-        if (ctx?.theme) applyDocumentTheme(ctx.theme);
-        if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-        return app;
-      });
+      appPromise = app
+        .connect()
+        .then(() => {
+          const ctx = app.getHostContext();
+          if (ctx?.theme) applyDocumentTheme(ctx.theme);
+          if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+          return app;
+        })
+        .catch((err: unknown) => {
+          appPromise = null;
+          throw err;
+        });
     }
     return appPromise;
   }

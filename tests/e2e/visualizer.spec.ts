@@ -142,4 +142,122 @@ test.describe('Beads Visualizer 4-Tab Prototype', () => {
     await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
     await expect(page.getByTestId('bv-action-status')).toHaveText('');
   });
+
+  test('clears stale views and inspector across tabs when switching to a failing workspace and ignores late responses', async ({
+    page,
+  }) => {
+    const wsOk = '/synthetic/workspace/beads-demo';
+    const wsBroken = '/synthetic/workspace/schema-old';
+    const wsSlow = '/synthetic/workspace/slow-demo';
+    let releaseSlow!: () => void;
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+
+    await page.route('**/api/workspaces', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ workspaces: [wsOk, wsBroken, wsSlow] }),
+      });
+    });
+
+    await page.route('**/api/snapshot*', async (route) => {
+      const url = new URL(route.request().url());
+      const ws = url.searchParams.get('workspace');
+      if (ws === wsBroken) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            error: 'Beads database schema is out of date for this workspace.',
+          }),
+        });
+        return;
+      }
+      if (ws === wsSlow) {
+        await slowGate;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            testEnv: 'synthetic',
+            workspace: wsSlow,
+            issues: [{ id: 'bv-stale-late', title: 'Late Stale Issue', status: 'open', priority: 1 }],
+            blocked: [],
+            stats: {
+              total_issues: 1,
+              open_issues: 1,
+              in_progress_issues: 0,
+              blocked_issues: 0,
+              closed_issues: 0,
+              ready_issues: 1,
+            },
+            etag: 'slow-etag',
+          }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto('/');
+    await page.getByTestId('auto-poll-toggle').uncheck();
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+
+    // Populate inspector and DAG panel from the working workspace.
+    await page.getByTestId('tree-node-bv-task-gate-check').click();
+    await expect(page.getByTestId('bv-inspector')).toContainText('bv-task-gate-check');
+    await expect(page.getByTestId('bv-quote-btn')).toBeEnabled();
+    await page.getByTestId('tab-dag').click();
+    await expect(page.getByTestId('bv-dag-svg')).toBeVisible();
+    await page.getByTestId('tab-tree').click();
+
+    // Switch to failing workspace: inspector must reset and every tab must show the error, never stale data.
+    await page.getByTestId('bv-workspace-select').selectOption(wsBroken);
+    await expect(page.getByTestId('bv-load-error')).toContainText('schema is out of date');
+    await expect(page.getByTestId('bv-inspector')).toContainText('Select an epic or task to inspect details.');
+    await expect(page.getByTestId('bv-quote-btn')).toBeDisabled();
+
+    await page.getByTestId('tab-dag').click();
+    await expect(page.getByTestId('bv-dag-svg')).toHaveCount(0);
+    await expect(page.locator('#view-dag [data-testid="bv-load-error"]')).toContainText('schema is out of date');
+
+    // Switch to slow workspace, then immediately back to working workspace; late slow response must not clobber.
+    await page.getByTestId('tab-tree').click();
+    await page.getByTestId('bv-workspace-select').selectOption(wsSlow);
+    await page.getByTestId('bv-workspace-select').selectOption(wsOk);
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+    await expect(page.getByTestId('bv-workspace-badge')).toContainText(wsOk);
+
+    releaseSlow();
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId('bv-workspace-badge')).toContainText(wsOk);
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+  });
+
+  test('does not overlap auto-poll snapshot requests while a slow request is in flight', async ({ page }) => {
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    let totalRequests = 0;
+
+    await page.route('**/api/snapshot*', async (route) => {
+      totalRequests += 1;
+      inFlight += 1;
+      if (inFlight > maxConcurrent) maxConcurrent = inFlight;
+      if (totalRequests >= 2) {
+        await new Promise((resolve) => setTimeout(resolve, 6500));
+      }
+      inFlight -= 1;
+      await route.continue();
+    });
+
+    await page.goto('/');
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+
+    // Wait long enough for the first auto-poll (5s) and overlap window (6.5s).
+    await page.waitForTimeout(12500);
+    expect(totalRequests).toBeGreaterThanOrEqual(2);
+    expect(maxConcurrent).toBe(1);
+  });
 });
