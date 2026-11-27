@@ -35,6 +35,7 @@ let pollTimer: number | null = null;
 let autoPollEnabled = true;
 let isRefreshing = false;
 let snapshotRequestId = 0;
+let selectionRequestId = 0;
 let lastLoadError: string | null = null;
 
 const collapsedIds = new Set<string>();
@@ -65,6 +66,7 @@ function renderLoadError(message: string): void {
 }
 
 function resetWorkspaceViewState(): void {
+  selectionRequestId += 1;
   currentSnapshot = null;
   selectedIssue = null;
   lastLoadError = null;
@@ -101,6 +103,8 @@ async function handleAgentMessage(issue: BeadIssue, target: 'current' | 'new'): 
 }
 
 async function selectIssue(issue: BeadIssue): Promise<void> {
+  const reqId = ++selectionRequestId;
+  const targetWorkspace = selectedWorkspace;
   selectedIssue = issue;
   const bodyEl = document.getElementById('inspector-body');
   const quoteBtn = document.getElementById('quote-btn') as HTMLButtonElement | null;
@@ -112,10 +116,14 @@ async function selectIssue(issue: BeadIssue): Promise<void> {
 
   let comments = issue.comments || [];
   try {
-    const fetched = await bridge.fetchIssueComments(issue.id, selectedWorkspace || undefined);
+    const fetched = await bridge.fetchIssueComments(issue.id, targetWorkspace || undefined);
     if (fetched.length > 0) comments = fetched;
   } catch {
     // Keep snapshot comments when detail fetch is unavailable.
+  }
+
+  if (reqId !== selectionRequestId || !currentSnapshot || selectedWorkspace !== targetWorkspace) {
+    return;
   }
 
   renderInspector(bodyEl, issue, comments, currentSnapshot, {
@@ -265,7 +273,13 @@ async function refreshSnapshot(forceFull = false, fromAutoPoll = false): Promise
     const etag = forceFull ? undefined : currentSnapshot?.etag;
     const data = await bridge.fetchSnapshot(etag, selectedWorkspace || undefined);
     if (reqId !== snapshotRequestId) return;
-    if (data.unchanged) return;
+    if (data.unchanged) {
+      lastLoadError = null;
+      if (statusEl?.textContent?.startsWith('Snapshot load failed:')) {
+        setActionStatus('');
+      }
+      return;
+    }
 
     currentSnapshot = data;
     lastLoadError = null;
