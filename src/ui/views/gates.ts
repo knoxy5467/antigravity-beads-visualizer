@@ -30,7 +30,8 @@ export function renderGatesView(
   onSendDecision: (issue: BeadIssue) => void,
   sidecarState?: SidecarStateSnapshot | null,
   onResolveGate?: (issue: BeadIssue) => void,
-  onSpawnAgent?: (beadId: string, runtime: ManagedAgentRuntime, prompt: string) => void
+  onSpawnAgent?: (beadId: string, runtime: ManagedAgentRuntime, prompt: string) => void,
+  onDriveEpic?: (epicId: string, runtime: ManagedAgentRuntime, prompt: string) => void
 ): void {
   container.replaceChildren();
 
@@ -77,6 +78,63 @@ export function renderGatesView(
     agentsWrap.appendChild(none);
   }
   sidecarPanel.appendChild(agentsWrap);
+
+  const monitoredWrap = document.createElement('div');
+  monitoredWrap.className = 'bv-sidecar-subsection';
+  monitoredWrap.setAttribute('data-testid', 'bv-monitored-gates');
+  const monitoredGates = sidecarState?.monitoredGates ?? [];
+  if (monitoredGates.length > 0) {
+    for (const gate of monitoredGates) {
+      const row = document.createElement('div');
+      row.className = 'bv-sidecar-agent-row';
+      row.textContent = `Monitored gate ${gate.gateId} (${gate.status}${gate.rehydrated ? ', restored' : ''})`;
+      monitoredWrap.appendChild(row);
+    }
+  } else {
+    const none = document.createElement('div');
+    none.className = 'bv-muted-label';
+    none.textContent = 'No monitored gates recorded.';
+    monitoredWrap.appendChild(none);
+  }
+  sidecarPanel.appendChild(monitoredWrap);
+
+  const hooksWrap = document.createElement('div');
+  hooksWrap.className = 'bv-sidecar-subsection';
+  hooksWrap.setAttribute('data-testid', 'bv-hook-events');
+  const hookEvents = sidecarState?.hookEvents ?? [];
+  if (hookEvents.length > 0) {
+    for (const hook of hookEvents.slice(-5)) {
+      const row = document.createElement('div');
+      row.className = 'bv-sidecar-agent-row';
+      row.textContent = `Hook ${hook.hookName} | ${hook.status}${hook.gateId ? ` | ${hook.gateId}` : ''}`;
+      hooksWrap.appendChild(row);
+    }
+  } else {
+    const none = document.createElement('div');
+    none.className = 'bv-muted-label';
+    none.textContent = 'No gate hook runs recorded.';
+    hooksWrap.appendChild(none);
+  }
+  sidecarPanel.appendChild(hooksWrap);
+
+  const workflowsWrap = document.createElement('div');
+  workflowsWrap.className = 'bv-sidecar-subsection';
+  workflowsWrap.setAttribute('data-testid', 'bv-workflow-runs');
+  const workflowRuns = sidecarState?.workflowRuns ?? [];
+  if (workflowRuns.length > 0) {
+    for (const run of workflowRuns.slice(-5)) {
+      const row = document.createElement('div');
+      row.className = 'bv-sidecar-agent-row';
+      row.textContent = `Workflow ${run.beadId} | ${run.trigger} | ${run.runtime} | ${run.status}`;
+      workflowsWrap.appendChild(row);
+    }
+  } else {
+    const none = document.createElement('div');
+    none.className = 'bv-muted-label';
+    none.textContent = 'No workflow dispatches recorded.';
+    workflowsWrap.appendChild(none);
+  }
+  sidecarPanel.appendChild(workflowsWrap);
 
   if (onSpawnAgent) {
     const form = document.createElement('form');
@@ -126,6 +184,22 @@ export function renderGatesView(
     });
 
     form.append(beadInput, runtimeSelect, promptInput, spawnBtn);
+    if (onDriveEpic) {
+      const driveBtn = document.createElement('button');
+      driveBtn.type = 'button';
+      driveBtn.className = 'bv-btn bv-btn-sm';
+      driveBtn.textContent = 'Drive Epic';
+      driveBtn.setAttribute('data-testid', 'sidecar-drive-epic-btn');
+      driveBtn.addEventListener('click', () => {
+        const epicId = beadInput.value.trim();
+        const runtime = runtimeSelect.value === 'agy' ? 'agy' : 'desktop';
+        const prompt = promptInput.value.trim();
+        if (epicId) {
+          onDriveEpic(epicId, runtime, prompt);
+        }
+      });
+      form.appendChild(driveBtn);
+    }
     sidecarPanel.appendChild(form);
   }
 

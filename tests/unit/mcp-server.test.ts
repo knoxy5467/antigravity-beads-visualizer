@@ -214,7 +214,12 @@ test('createBeadsMcpServer keeps beads_open_visualizer as the only model-visible
     assert.deepEqual(modelVisible, ['beads_open_visualizer']);
 
     const byName = new Map(tools.tools.map((t) => [t.name, t]));
-    for (const appToolName of ['beads_gate_monitor_status', 'beads_resolve_gate', 'beads_spawn_agent']) {
+    for (const appToolName of [
+      'beads_gate_monitor_status',
+      'beads_resolve_gate',
+      'beads_spawn_agent',
+      'beads_drive_epic',
+    ]) {
       const tool = byName.get(appToolName);
       assert.ok(tool, `Missing tool ${appToolName}`);
       const meta = tool._meta as { ui?: { visibility?: string[] } } | undefined;
@@ -255,6 +260,18 @@ test('createBeadsMcpServer keeps beads_open_visualizer as the only model-visible
       arguments: { beadId: 'list', runtime: 'agy', prompt: 'Invalid id.' },
     });
     assert.equal(spawnInvalid.isError, true);
+
+    const driveEpicOk = await client.callTool({
+      name: 'beads_drive_epic',
+      arguments: { epicId: 'bv-meta-demo', runtime: 'desktop', prompt: 'Drive synthetic epic.' },
+    });
+    assert.equal(driveEpicOk.isError, undefined);
+
+    const driveEpicInvalid = await client.callTool({
+      name: 'beads_drive_epic',
+      arguments: { epicId: '--bad-epic', runtime: 'desktop' },
+    });
+    assert.equal(driveEpicInvalid.isError, true);
   } finally {
     await Promise.all([client.close(), server.close()]);
   }

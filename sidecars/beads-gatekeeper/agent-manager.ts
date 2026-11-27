@@ -517,7 +517,12 @@ export class HybridAgentManager {
       if (record.runtime !== "desktop" || !record.conversationId || record.status === "stopped") {
         continue;
       }
-      const rpcStatus = await this.desktopAdapter.getStatus(record.conversationId);
+      let rpcStatus: ManagedAgentStatus = record.status;
+      try {
+        rpcStatus = await this.desktopAdapter.getStatus(record.conversationId);
+      } catch {
+        continue;
+      }
       const isRunning = rpcStatus === "running";
       if (this.appDataDir) {
         const transcriptPath = path.join(

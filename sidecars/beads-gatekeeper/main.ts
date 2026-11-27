@@ -3,15 +3,15 @@
 // kind: code
 // summary: >-
 //   Run the continuous Beads Gatekeeper sidecar loop for Dolt supervision, gate checks, and worker dispatch.
-//   Also: sidecar, main, daemon, dolt-supervisor, gatekeeper, agent-manager
+//   Also: sidecar, main, daemon, dolt-supervisor, gatekeeper, agent-manager, workflow-driver
 // status: active
 // weight: 0.95
 // tags: ["topic:sidecar", "sidecar", "scope:sidecars", "sidecars", "daemon", "beads"]
 // rationale: >-
-//   Coordinates workspace Dolt servers, deterministic gate evaluation, and hybrid agent workers in one process.
-// applies: running sidecar daemon, executing single smoke cycle, draining queued UI commands
+//   Coordinates workspace Dolt servers, deterministic gate evaluation, restart recovery, and workflow initiation.
+// applies: running sidecar daemon, restoring monitored gates on restart, driving epics and hook recovery
 // seeded_questions:
-//   - "How does main.ts run DoltSupervisor, GatekeeperEngine, and HybridAgentManager in one cycle?"
+//   - "How does main.ts restore monitored gates and initiate workflow conversations after a restart?"
 //   - "sidecars/beads-gatekeeper/main.ts runSidecarOnce"
 // @scry.entry.end
 
@@ -26,6 +26,7 @@ import { DoltSupervisor } from "./dolt-supervisor.js";
 import { GatekeeperEngine } from "./gatekeeper.js";
 import { resolvePluginDataDir, SidecarStateStore } from "./state-store.js";
 import type { SidecarStateSnapshot } from "./types.js";
+import { WorkflowDriver } from "./workflow-driver.js";
 import { loadOptInConfig } from "./workspace-registry.js";
 
 export interface SidecarCycleOptions {
@@ -34,20 +35,23 @@ export interface SidecarCycleOptions {
   doltSupervisor?: DoltSupervisor;
   gatekeeper?: GatekeeperEngine;
   agentManager?: HybridAgentManager;
+  workflowDriver?: WorkflowDriver;
+  hydrated?: boolean;
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
 /**
- * Execute one deterministic sidecar reconciliation cycle and persist state.json.
+ * Execute one deterministic sidecar reconciliation cycle, hydrate restart state, and persist state.json.
  */
 export async function runSidecarOnce(
   options: SidecarCycleOptions = {},
 ): Promise<SidecarStateSnapshot> {
   const dataDir = options.dataDir ?? resolvePluginDataDir();
   const stateStore = new SidecarStateStore(dataDir);
-  const doltSupervisor = options.doltSupervisor ?? new DoltSupervisor();
-  const gatekeeper = options.gatekeeper ?? new GatekeeperEngine();
+  const previous = await stateStore.readState();
+  const nowIso = new Date().toISOString();
+
   const agentManager =
     options.agentManager ??
     new HybridAgentManager({
@@ -56,13 +60,69 @@ export async function runSidecarOnce(
       appDataDir: options.appDataDir,
     });
 
+  const doltSupervisor = options.doltSupervisor ?? new DoltSupervisor();
+  const gatekeeper =
+    options.gatekeeper ??
+    new GatekeeperEngine({
+      notifyWaiter: async (waiter, gateId, status, reason) => {
+        if (!waiter || waiter.startsWith("bv-")) {
+          return;
+        }
+        try {
+          await agentManager.sendMessageToAgent(
+            waiter,
+            `Gate ${gateId} is now ${status}.${reason ? ` Reason: ${reason}` : ""}`,
+          );
+        } catch {
+          // Keep gatekeeper cycle resilient when a waiter conversation is closed.
+        }
+      },
+    });
+  const workflowDriver =
+    options.workflowDriver ??
+    new WorkflowDriver({
+      agentManager,
+    });
+
+  if (!options.hydrated) {
+    gatekeeper.hydrate({
+      monitoredGates: previous.monitoredGates,
+      hookEvents: previous.hookEvents,
+      notifiedKeys: previous.notifiedKeys,
+    });
+    agentManager.hydrateAgents(previous.agents || []);
+    workflowDriver.hydrate(previous.workflowRuns || []);
+  }
+
+  const drainedHooks = await stateStore.drainHookEvents();
+  const hookEvents = gatekeeper.ingestHookEvents(drainedHooks);
+
   const configPath = path.join(dataDir, "config.json");
   const config = await loadOptInConfig(configPath);
   const doltStates = await doltSupervisor.reconcileAll(config.workspaces);
   const gateStates = await gatekeeper.runAll(config.workspaces, doltStates);
 
+  for (let i = 0; i < config.workspaces.length; i += 1) {
+    const ws = config.workspaces[i];
+    const dolt = doltStates[i] ?? {
+      workspacePath: ws.workspacePath,
+      port: 0,
+      database: "beads",
+      status: "stopped" as const,
+    };
+    const gate = gateStates[i];
+    if (gate) {
+      await workflowDriver.driveWorkspace(ws, dolt, gate);
+    }
+  }
+
   const commands = await stateStore.drainCommands();
   for (const command of commands) {
+    const workspaceCfg = config.workspaces.find(
+      (ws) => path.resolve(ws.workspacePath).toLowerCase() === path.resolve(command.workspacePath).toLowerCase(),
+    );
+    const maxConcurrentWorkers = workspaceCfg?.maxConcurrentWorkers ?? 2;
+
     if (command.type === "resolve_gate") {
       try {
         await gatekeeper.resolveHumanGate(command.workspacePath, command.gateId, command.reason);
@@ -73,10 +133,6 @@ export async function runSidecarOnce(
     }
 
     if (command.type === "spawn_agent") {
-      const workspaceCfg = config.workspaces.find(
-        (ws) => path.resolve(ws.workspacePath).toLowerCase() === path.resolve(command.workspacePath).toLowerCase(),
-      );
-      const maxConcurrentWorkers = workspaceCfg?.maxConcurrentWorkers ?? 2;
       try {
         await agentManager.spawnAgent({
           workspacePath: command.workspacePath,
@@ -88,27 +144,55 @@ export async function runSidecarOnce(
       } catch {
         // Keep sidecar cycle active when worker dispatch hits concurrency or adapter limits.
       }
+      continue;
+    }
+
+    if (command.type === "drive_epic") {
+      try {
+        await workflowDriver.driveEpic({
+          workspacePath: command.workspacePath,
+          epicId: command.epicId,
+          runtime: command.runtime,
+          maxConcurrentWorkers,
+          prompt: command.prompt,
+        });
+      } catch {
+        // Keep sidecar cycle active when epic kickoff hits concurrency or adapter limits.
+      }
     }
   }
 
   const agents = await agentManager.refreshHealth();
+  const restartedAt =
+    previous.daemonPid && previous.daemonPid !== process.pid
+      ? nowIso
+      : previous.restartedAt ?? (previous.daemonPid ? undefined : nowIso);
+
   const snapshot: SidecarStateSnapshot = {
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso,
     daemonPid: process.pid,
+    restartedAt,
     doltStates,
     gateStates,
     agents,
+    monitoredGates: gatekeeper.getMonitoredGates(),
+    hookEvents,
+    workflowRuns: workflowDriver.getWorkflowRuns(),
+    notifiedKeys: gatekeeper.getNotifiedKeys(),
   };
   await stateStore.writeState(snapshot);
   return snapshot;
 }
 
 /**
- * Start the continuous sidecar daemon loop with sequential scheduling and signal shutdown.
+ * Start the continuous sidecar daemon loop with restart hydration and signal shutdown.
  */
 export async function startSidecarDaemon(options: SidecarCycleOptions = {}): Promise<void> {
+  const dataDir = options.dataDir ?? resolvePluginDataDir();
+  const stateStore = new SidecarStateStore(dataDir);
+  const previous = await stateStore.readState();
+
   const doltSupervisor = options.doltSupervisor ?? new DoltSupervisor();
-  const gatekeeper = options.gatekeeper ?? new GatekeeperEngine();
   const agentManager =
     options.agentManager ??
     new HybridAgentManager({
@@ -116,18 +200,51 @@ export async function startSidecarDaemon(options: SidecarCycleOptions = {}): Pro
       agyAdapter: new AgyCliAgentAdapter(),
       appDataDir: options.appDataDir,
     });
+  const gatekeeper =
+    options.gatekeeper ??
+    new GatekeeperEngine({
+      notifyWaiter: async (waiter, gateId, status, reason) => {
+        if (!waiter || waiter.startsWith("bv-")) {
+          return;
+        }
+        try {
+          await agentManager.sendMessageToAgent(
+            waiter,
+            `Gate ${gateId} is now ${status}.${reason ? ` Reason: ${reason}` : ""}`,
+          );
+        } catch {
+          // Keep gatekeeper cycle resilient when a waiter conversation is closed.
+        }
+      },
+    });
+  const workflowDriver =
+    options.workflowDriver ??
+    new WorkflowDriver({
+      agentManager,
+    });
+
+  gatekeeper.hydrate({
+    monitoredGates: previous.monitoredGates,
+    hookEvents: previous.hookEvents,
+    notifiedKeys: previous.notifiedKeys,
+  });
+  agentManager.hydrateAgents(previous.agents || []);
+  workflowDriver.hydrate(previous.workflowRuns || []);
 
   const sharedOptions: SidecarCycleOptions = {
     ...options,
+    dataDir,
     doltSupervisor,
     gatekeeper,
     agentManager,
+    workflowDriver,
+    hydrated: true,
   };
 
   let stopping = false;
   let timer: NodeJS.Timeout | undefined;
 
-  const shutdown = async () => {
+  const shutdown = async (exitCode = 0) => {
     if (stopping) {
       return;
     }
@@ -137,14 +254,22 @@ export async function startSidecarDaemon(options: SidecarCycleOptions = {}): Pro
     }
     await agentManager.stopAll();
     await doltSupervisor.stopAll();
-    process.exit(0);
+    process.exit(exitCode);
   };
 
   process.once("SIGINT", () => {
-    void shutdown();
+    void shutdown(0);
   });
   process.once("SIGTERM", () => {
-    void shutdown();
+    void shutdown(0);
+  });
+  process.once("uncaughtException", (err) => {
+    process.stderr.write(`Uncaught sidecar exception: ${err.message}\n`);
+    void shutdown(1);
+  });
+  process.once("unhandledRejection", (reason) => {
+    process.stderr.write(`Unhandled sidecar rejection: ${String(reason)}\n`);
+    void shutdown(1);
   });
 
   const scheduleNext = () => {

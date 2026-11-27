@@ -359,4 +359,20 @@ test.describe('Beads Visualizer 4-Tab Prototype', () => {
 
     await page.screenshot({ path: 'test-results/pr-media/synthetic-sidecar-gates.png', fullPage: true });
   });
+
+  test('displays monitored gates, hook events, workflow dispatches, and drives an epic', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('auto-poll-toggle').uncheck();
+    await page.getByTestId('tab-gates').click();
+
+    await expect(page.getByTestId('bv-monitored-gates')).toContainText('bv-task-gate-check');
+    await expect(page.getByTestId('bv-hook-events')).toContainText('pre-push');
+    await expect(page.getByTestId('bv-workflow-runs')).toContainText('bv-meta-demo');
+
+    await page.getByTestId('sidecar-spawn-bead').fill('bv-meta-demo');
+    await page.getByTestId('sidecar-drive-epic-btn').click();
+    await expect(page.getByTestId('bv-action-status')).toContainText('bv-meta-demo');
+
+    await page.screenshot({ path: 'test-results/pr-media/synthetic-sidecar-workflows.png', fullPage: true });
+  });
 });

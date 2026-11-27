@@ -418,6 +418,63 @@ export function createBeadsMcpServer(options: McpServerOptions = {}): McpServer 
     }
   );
 
+  server.registerTool(
+    'beads_drive_epic',
+    {
+      title: 'Drive Beads Epic Conversation',
+      description: 'Queue an automated conversation to drive a Beads epic or workflow.',
+      inputSchema: {
+        epicId: z.string().describe('Beads epic or task identifier.'),
+        runtime: z.enum(['desktop', 'agy']).describe('Target worker runtime.'),
+        prompt: z.string().optional().describe('Optional initial instruction prompt.'),
+        workspace: z.string().optional().describe('Optional Beads workspace path.'),
+      },
+      _meta: {
+        ui: {
+          resourceUri: APP_RESOURCE_URI,
+          visibility: ['app'],
+        },
+      },
+    },
+    async (args) => {
+      try {
+        if (!isValidBeadId(args.epicId)) {
+          return errorResult('Invalid or missing epicId parameter.');
+        }
+        const validatedWorkspace = await validateWorkspaceParam(args.workspace ?? null, options);
+        if (validatedWorkspace === null) {
+          return errorResult('Workspace is not in allowed Beads workspaces.');
+        }
+        const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH;
+        if (!fixturePath) {
+          const targetWorkspace = validatedWorkspace ?? options.cwd ?? process.cwd();
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'drive_epic',
+            workspacePath: targetWorkspace,
+            epicId: args.epicId,
+            runtime: args.runtime,
+            prompt: args.prompt?.trim() || undefined,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        const payload = {
+          ok: true,
+          queued: true,
+          epicId: args.epicId,
+          runtime: args.runtime,
+          workspace: validatedWorkspace ?? null,
+          synthetic: Boolean(fixturePath),
+        };
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          structuredContent: payload,
+        };
+      } catch (err) {
+        return handleToolError('beads_drive_epic', err);
+      }
+    }
+  );
+
   return server;
 }
 
