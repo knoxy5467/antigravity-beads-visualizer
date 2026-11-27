@@ -142,5 +142,50 @@
       ],
       "comments": []
     }
-  ]
+  ],
+  "sidecar": {
+    "updatedAt": "2026-11-26T12:00:00Z",
+    "daemonPid": 4242,
+    "doltStates": [
+      {
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "port": 3307,
+        "database": "bv",
+        "status": "running",
+        "pid": 3307
+      }
+    ],
+    "gateStates": [
+      {
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "lastRunAt": "2026-11-26T12:00:00Z",
+        "discoveredCount": 2,
+        "resolvedGates": ["bv-gate-resolved-demo"],
+        "escalatedGates": ["bv-task-gate-check"],
+        "readyMolecules": ["bv-task-ready-polish"]
+      }
+    ],
+    "agents": [
+      {
+        "id": "agent-syn-1",
+        "runtime": "desktop",
+        "beadId": "bv-task-inspector",
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "status": "running",
+        "conversationId": "conv-syn-1",
+        "startedAt": "2026-11-26T11:55:00Z",
+        "updatedAt": "2026-11-26T12:00:00Z"
+      },
+      {
+        "id": "agent-syn-2",
+        "runtime": "agy",
+        "beadId": "bv-task-ready-polish",
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "status": "idle",
+        "pid": 9001,
+        "startedAt": "2026-11-26T11:50:00Z",
+        "updatedAt": "2026-11-26T11:58:00Z"
+      }
+    ]
+  }
 }

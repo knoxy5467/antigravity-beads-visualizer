@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
@@ -191,5 +191,90 @@ test('createBeadsMcpServer catches errors in beads_list_workspaces and returns i
     assert.match(msg, /ENOENT|no such file/i);
   } finally {
     await Promise.all([client.close(), server.close()]);
+  }
+});
+
+test('createBeadsMcpServer keeps beads_open_visualizer as the only model-visible tool and exposes app-only sidecar controls', async () => {
+  const server = createBeadsMcpServer({
+    fixturePath: 'tests/fixtures/synthetic-beads.json',
+    testEnv: 'synthetic',
+  });
+  const client = new Client({ name: 'test-sidecar-tools-client', version: '1.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+  try {
+    const tools = await client.listTools();
+    const modelVisible = tools.tools
+      .filter((t) => {
+        const meta = t._meta as { ui?: { visibility?: string[] } } | undefined;
+        return !meta?.ui?.visibility || meta.ui.visibility.includes('model');
+      })
+      .map((t) => t.name);
+    assert.deepEqual(modelVisible, ['beads_open_visualizer']);
+
+    const byName = new Map(tools.tools.map((t) => [t.name, t]));
+    for (const appToolName of ['beads_gate_monitor_status', 'beads_resolve_gate', 'beads_spawn_agent']) {
+      const tool = byName.get(appToolName);
+      assert.ok(tool, `Missing tool ${appToolName}`);
+      const meta = tool._meta as { ui?: { visibility?: string[] } } | undefined;
+      assert.deepEqual(meta?.ui?.visibility, ['app']);
+    }
+
+    const statusRes = await client.callTool({ name: 'beads_gate_monitor_status', arguments: {} });
+    assert.equal(statusRes.isError, undefined);
+    const statusData = statusRes.structuredContent as { doltStates?: unknown[]; agents?: unknown[] };
+    assert.equal(statusData.doltStates?.length, 1);
+    assert.equal(statusData.agents?.length, 2);
+
+    const resolveOk = await client.callTool({
+      name: 'beads_resolve_gate',
+      arguments: { gateId: 'bv-task-gate-check', reason: 'Approved in synthetic test.' },
+    });
+    assert.equal(resolveOk.isError, undefined);
+    const resolveInvalid = await client.callTool({
+      name: 'beads_resolve_gate',
+      arguments: { gateId: '--bad-flag', reason: 'Invalid id' },
+    });
+    assert.equal(resolveInvalid.isError, true);
+
+    const spawnDesktop = await client.callTool({
+      name: 'beads_spawn_agent',
+      arguments: { beadId: 'bv-task-inspector', runtime: 'desktop', prompt: 'Inspect bead.' },
+    });
+    assert.equal(spawnDesktop.isError, undefined);
+
+    const spawnAgy = await client.callTool({
+      name: 'beads_spawn_agent',
+      arguments: { beadId: 'bv-task-ready-polish', runtime: 'agy', prompt: 'Run polish task.' },
+    });
+    assert.equal(spawnAgy.isError, undefined);
+
+    const spawnInvalid = await client.callTool({
+      name: 'beads_spawn_agent',
+      arguments: { beadId: 'list', runtime: 'agy', prompt: 'Invalid id.' },
+    });
+    assert.equal(spawnInvalid.isError, true);
+  } finally {
+    await Promise.all([client.close(), server.close()]);
+  }
+});
+
+test('built plugin includes bundled sidecar daemon and scoped sidecar.json without wildcards', () => {
+  const sidecarMain = resolve(process.cwd(), 'dist', 'plugin', 'sidecars', 'beads-gatekeeper', 'main.mjs');
+  const sidecarManifest = resolve(process.cwd(), 'dist', 'plugin', 'sidecars', 'beads-gatekeeper', 'sidecar.json');
+  assert.equal(existsSync(sidecarMain), true, 'Missing bundled sidecar main.mjs');
+  assert.equal(existsSync(sidecarManifest), true, 'Missing sidecar.json');
+
+  const manifest = JSON.parse(readFileSync(sidecarManifest, 'utf8')) as {
+    restart_policy?: string;
+    has_web_ui?: boolean;
+    agent_permissions?: string[];
+  };
+  assert.equal(manifest.restart_policy, 'always');
+  assert.equal(manifest.has_web_ui, false);
+  assert.ok(Array.isArray(manifest.agent_permissions) && manifest.agent_permissions.length > 0);
+  for (const perm of manifest.agent_permissions) {
+    assert.equal(perm.includes('*'), false, `Unexpected wildcard permission: ${perm}`);
   }
 });

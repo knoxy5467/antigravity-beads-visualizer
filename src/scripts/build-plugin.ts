@@ -59,12 +59,14 @@ export async function buildPluginArtifacts(repoRoot: string = REPO_ROOT): Promis
   const pluginBinDir = join(pluginDir, 'bin');
   const pluginAssetsDir = join(pluginDir, 'assets');
   const pluginSkillDir = join(pluginDir, 'skills', 'beads-visualizer');
+  const pluginSidecarDir = join(pluginDir, 'sidecars', 'beads-gatekeeper');
 
   await Promise.all([
     mkdir(mcpAppDir, { recursive: true }),
     mkdir(pluginBinDir, { recursive: true }),
     mkdir(pluginAssetsDir, { recursive: true }),
     mkdir(pluginSkillDir, { recursive: true }),
+    mkdir(pluginSidecarDir, { recursive: true }),
   ]);
 
   const uiBundle = await build({
@@ -112,6 +114,32 @@ export async function buildPluginArtifacts(repoRoot: string = REPO_ROOT): Promis
     },
   });
 
+  await build({
+    entryPoints: [join(repoRoot, 'sidecars', 'beads-gatekeeper', 'main.ts')],
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: ['node20'],
+    outfile: join(pluginSidecarDir, 'main.mjs'),
+    banner: {
+      js: '#!/usr/bin/env node\nimport { createRequire as __bvCreateRequire } from "node:module"; const require = __bvCreateRequire(import.meta.url);',
+    },
+  });
+
+  const sidecarJson = {
+    name: 'beads-gatekeeper',
+    description: 'Monitor opt-in Beads Dolt servers, deterministic gates, and managed workers.',
+    command: ['node', 'sidecars/beads-gatekeeper/main.mjs'],
+    restart_policy: 'always',
+    has_web_ui: false,
+    agent_permissions: [
+      'command(bd)',
+      'command(dolt)',
+      'command(agy)',
+      'mcp(beads-visualizer_beads)',
+    ],
+  };
+
   const pluginJson = {
     name: 'beads-visualizer',
     version: '0.1.0',
@@ -130,6 +158,7 @@ export async function buildPluginArtifacts(repoRoot: string = REPO_ROOT): Promis
   await Promise.all([
     writeFile(join(pluginDir, 'plugin.json'), `${JSON.stringify(pluginJson, null, 2)}\n`, 'utf-8'),
     writeFile(join(pluginDir, 'mcp_config.json'), `${JSON.stringify(mcpConfigJson, null, 2)}\n`, 'utf-8'),
+    writeFile(join(pluginSidecarDir, 'sidecar.json'), `${JSON.stringify(sidecarJson, null, 2)}\n`, 'utf-8'),
     writeFile(join(pluginSkillDir, 'SKILL.md'), PLUGIN_SKILL_MD, 'utf-8'),
     writeFile(join(pluginAssetsDir, 'logo.svg'), PLUGIN_LOGO_SVG, 'utf-8'),
   ]);

@@ -17,6 +17,7 @@
 
 import type { BeadIssue, BeadSnapshot } from '../core/graph.js';
 import type { LaneGroupBy } from '../core/lanes.js';
+import type { ManagedAgentRuntime, SidecarStateSnapshot } from '../../sidecars/beads-gatekeeper/types.js';
 import { createHostBridge } from './host-bridge.js';
 import { renderBoardView } from './views/board.js';
 import { renderDagView, type DagViewState } from './views/dag.js';
@@ -28,6 +29,7 @@ type TabKey = 'tree' | 'dag' | 'board' | 'gates';
 
 const bridge = createHostBridge();
 let currentSnapshot: BeadSnapshot | null = null;
+let currentSidecarState: SidecarStateSnapshot | null = null;
 let selectedIssue: BeadIssue | null = null;
 let selectedWorkspace = '';
 let activeTab: TabKey = 'tree';
@@ -215,8 +217,37 @@ function renderAllViews(): void {
       selectedId,
       (issue) => void selectIssue(issue),
       (issue) => void handleQuote(issue),
-      (issue) => void handleAgentMessage(issue, 'current')
+      (issue) => void handleAgentMessage(issue, 'current'),
+      currentSidecarState,
+      (issue) => void handleResolveGate(issue),
+      (beadId, runtime, prompt) => void handleSpawnAgent(beadId, runtime, prompt)
     );
+  }
+}
+
+async function handleResolveGate(issue: BeadIssue): Promise<void> {
+  try {
+    const status = await bridge.resolveGate(
+      issue.id,
+      `Approved from Beads Visualizer UI for ${issue.id}.`,
+      selectedWorkspace || undefined
+    );
+    setActionStatus(status);
+  } catch (err) {
+    setActionStatus(`Gate resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function handleSpawnAgent(
+  beadId: string,
+  runtime: ManagedAgentRuntime,
+  prompt: string
+): Promise<void> {
+  try {
+    const status = await bridge.spawnAgent(beadId, runtime, prompt, selectedWorkspace || undefined);
+    setActionStatus(status);
+  } catch (err) {
+    setActionStatus(`Spawn worker failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -283,6 +314,11 @@ async function refreshSnapshot(forceFull = false, fromAutoPoll = false): Promise
 
     currentSnapshot = data;
     lastLoadError = null;
+    try {
+      currentSidecarState = await bridge.fetchSidecarStatus();
+    } catch {
+      // Keep core snapshot views active if sidecar status is unavailable.
+    }
     if (badgeEl) badgeEl.textContent = data.workspace;
     if (bannerEl) {
       bannerEl.textContent = data.testEnv === 'synthetic' ? 'Synthetic Test Environment' : 'Live Mode';

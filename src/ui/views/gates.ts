@@ -2,23 +2,24 @@
 // id: src.ui-gates~3709746f
 // kind: code
 // summary: >-
-//   Render the Gates and Approvals view with blocker chips and host bridge actions.
-//   Also: ui, gates, approvals, blockers, quote, a2a
+//   Render the Gates and Approvals view with blocker chips, sidecar monitor, and host bridge actions.
+//   Also: ui, gates, approvals, blockers, sidecar, agents, a2a
 // status: active
 // weight: 0.85
 // tags: ["topic:ui", "ui", "scope:src", "src", "gates", "typescript"]
 // rationale: >-
-//   Surfaces open and resolved gates with blocker links and one-click quote or approval dispatch.
-// applies: rendering gates panel, inspecting gate blockers, preparing gate decisions
+//   Surfaces open and resolved gates with blocker links, sidecar health, and worker dispatch controls.
+// applies: rendering gates panel, inspecting gate blockers, queuing gate resolution and worker spawns
 // seeded_questions:
-//   - "How does gates.ts display blocker chips and trigger gate actions?"
+//   - "How does gates.ts display sidecar health, managed agents, and gate controls?"
 //   - "src/ui/views/gates.ts renderGatesView"
 // @scry.entry.end
 
 import type { BeadIssue, BeadSnapshot } from '../../core/graph.js';
+import type { ManagedAgentRuntime, SidecarStateSnapshot } from '../../../sidecars/beads-gatekeeper/types.js';
 
 /**
- * Render the Gates and Approvals view into the target container.
+ * Render the Gates and Approvals view with sidecar status and worker controls.
  */
 export function renderGatesView(
   container: HTMLElement,
@@ -26,9 +27,109 @@ export function renderGatesView(
   selectedId: string | null,
   onSelect: (issue: BeadIssue) => void,
   onQuote: (issue: BeadIssue) => void,
-  onSendDecision: (issue: BeadIssue) => void
+  onSendDecision: (issue: BeadIssue) => void,
+  sidecarState?: SidecarStateSnapshot | null,
+  onResolveGate?: (issue: BeadIssue) => void,
+  onSpawnAgent?: (beadId: string, runtime: ManagedAgentRuntime, prompt: string) => void
 ): void {
   container.replaceChildren();
+
+  const sidecarPanel = document.createElement('section');
+  sidecarPanel.className = 'bv-sidecar-panel';
+  sidecarPanel.setAttribute('data-testid', 'bv-sidecar-status');
+
+  const sidecarHeader = document.createElement('h3');
+  sidecarHeader.className = 'bv-section-title';
+  sidecarHeader.textContent = 'Sidecar Gatekeeper and Workers';
+  sidecarPanel.appendChild(sidecarHeader);
+
+  const doltGrid = document.createElement('div');
+  doltGrid.className = 'bv-sidecar-grid';
+  if (sidecarState && sidecarState.doltStates.length > 0) {
+    for (const dolt of sidecarState.doltStates) {
+      const badge = document.createElement('span');
+      badge.className = 'bv-badge';
+      badge.textContent = `Dolt ${dolt.database}:${dolt.port} (${dolt.status})`;
+      doltGrid.appendChild(badge);
+    }
+  } else {
+    const idleNote = document.createElement('span');
+    idleNote.className = 'bv-muted-label';
+    idleNote.textContent = 'No opt-in Dolt servers reported by sidecar.';
+    doltGrid.appendChild(idleNote);
+  }
+  sidecarPanel.appendChild(doltGrid);
+
+  const agentsWrap = document.createElement('div');
+  agentsWrap.className = 'bv-sidecar-agents';
+  agentsWrap.setAttribute('data-testid', 'bv-sidecar-agents');
+  if (sidecarState && sidecarState.agents.length > 0) {
+    for (const agent of sidecarState.agents) {
+      const row = document.createElement('div');
+      row.className = 'bv-sidecar-agent-row';
+      row.textContent = `${agent.id} | ${agent.runtime} | ${agent.beadId} | ${agent.status}`;
+      agentsWrap.appendChild(row);
+    }
+  } else {
+    const none = document.createElement('div');
+    none.className = 'bv-muted-label';
+    none.textContent = 'No managed workers active.';
+    agentsWrap.appendChild(none);
+  }
+  sidecarPanel.appendChild(agentsWrap);
+
+  if (onSpawnAgent) {
+    const form = document.createElement('form');
+    form.className = 'bv-spawn-form';
+    const defaultBeadId =
+      selectedId ?? snapshot.issues.find((item) => item.issue_type === 'task')?.id ?? 'bv-task-inspector';
+
+    const beadInput = document.createElement('input');
+    beadInput.type = 'text';
+    beadInput.className = 'bv-input';
+    beadInput.value = defaultBeadId;
+    beadInput.setAttribute('aria-label', 'Bead ID');
+    beadInput.setAttribute('data-testid', 'sidecar-spawn-bead');
+
+    const runtimeSelect = document.createElement('select');
+    runtimeSelect.className = 'bv-select';
+    runtimeSelect.setAttribute('aria-label', 'Worker Runtime');
+    runtimeSelect.setAttribute('data-testid', 'sidecar-spawn-runtime');
+    for (const rt of ['desktop', 'agy'] as const) {
+      const opt = document.createElement('option');
+      opt.value = rt;
+      opt.textContent = rt;
+      runtimeSelect.appendChild(opt);
+    }
+
+    const promptInput = document.createElement('input');
+    promptInput.type = 'text';
+    promptInput.className = 'bv-input';
+    promptInput.value = 'Run task verification for assigned bead.';
+    promptInput.setAttribute('aria-label', 'Worker Prompt');
+    promptInput.setAttribute('data-testid', 'sidecar-spawn-prompt');
+
+    const spawnBtn = document.createElement('button');
+    spawnBtn.type = 'submit';
+    spawnBtn.className = 'bv-btn bv-btn-sm bv-btn-primary';
+    spawnBtn.textContent = 'Spawn Worker';
+    spawnBtn.setAttribute('data-testid', 'sidecar-spawn-btn');
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const beadId = beadInput.value.trim();
+      const runtime = runtimeSelect.value === 'agy' ? 'agy' : 'desktop';
+      const prompt = promptInput.value.trim();
+      if (beadId && prompt) {
+        onSpawnAgent(beadId, runtime, prompt);
+      }
+    });
+
+    form.append(beadInput, runtimeSelect, promptInput, spawnBtn);
+    sidecarPanel.appendChild(form);
+  }
+
+  container.appendChild(sidecarPanel);
 
   const gates = snapshot.issues.filter((issue) => issue.issue_type === 'gate');
   if (gates.length === 0) {
@@ -116,6 +217,17 @@ export function renderGatesView(
     decideBtn.addEventListener('click', () => onSendDecision(gate));
 
     actions.append(quoteBtn, decideBtn);
+
+    if (onResolveGate && gate.status !== 'closed') {
+      const resolveBtn = document.createElement('button');
+      resolveBtn.type = 'button';
+      resolveBtn.className = 'bv-btn bv-btn-sm';
+      resolveBtn.textContent = 'Resolve Gate';
+      resolveBtn.setAttribute('data-testid', `gate-resolve-${gate.id}`);
+      resolveBtn.addEventListener('click', () => onResolveGate(gate));
+      actions.appendChild(resolveBtn);
+    }
+
     card.appendChild(actions);
     list.appendChild(card);
   }

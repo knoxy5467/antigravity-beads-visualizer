@@ -410,6 +410,33 @@ body {
   gap: 10px;
 }
 
+.bv-sidecar-panel {
+  background: var(--bv-bg-primary);
+  border: 1px solid var(--bv-border-primary);
+  border-radius: 6px;
+  padding: 10px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bv-sidecar-grid,
+.bv-spawn-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.bv-sidecar-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--bv-text-secondary);
+}
+
 .bv-gate-card {
   background: var(--bv-bg-primary);
   border: 1px solid var(--bv-border-primary);
