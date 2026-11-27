@@ -106,6 +106,132 @@ export function deriveBlockedEntries(issues: BeadIssue[]): BeadBlockedEntry[] {
 
 const BEAD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const RESERVED_SUBCOMMANDS = new Set(['add', 'list', 'show', 'close', 'update', 'delete']);
+const BEADS_WORKSPACE_MARKERS = [
+  'metadata.json',
+  'config.yaml',
+  'issues.jsonl',
+  'beads.db',
+  'dolt',
+  'embeddeddolt',
+] as const;
+
+/**
+ * Return true when dir contains a project .beads folder with database or config files.
+ */
+export function isBeadsWorkspaceDir(dir: string): boolean {
+  const beadsDir = join(dir, '.beads');
+  if (!existsSync(beadsDir)) return false;
+  return BEADS_WORKSPACE_MARKERS.some((marker) => existsSync(join(beadsDir, marker)));
+}
+
+function normalizeWorkspaceKey(dir: string): string {
+  const resolved = resolve(dir);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+/**
+ * Convert a bd CLI failure into a clear user message without raw binary paths.
+ */
+export function formatBdCommandError(err: unknown): string {
+  const record =
+    typeof err === 'object' && err !== null
+      ? (err as {
+          stderr?: unknown;
+          stdout?: unknown;
+          message?: unknown;
+          killed?: unknown;
+          signal?: unknown;
+          code?: unknown;
+          syscall?: unknown;
+        })
+      : {};
+  const stderr = typeof record.stderr === 'string' ? record.stderr.trim() : '';
+  const stdout = typeof record.stdout === 'string' ? record.stdout.trim() : '';
+  const syscall = typeof record.syscall === 'string' ? record.syscall : '';
+  const rawMessage = err instanceof Error ? err.message : typeof record.message === 'string' ? record.message : String(err);
+  const combined = [stderr, stdout, rawMessage].filter(Boolean).join('\n').trim();
+
+  if (/dolt server unreachable|connectex|econnrefused/i.test(combined)) {
+    const addrMatch =
+      combined.match(/at\s+([0-9A-Za-z.-]+:\d+)/i) ??
+      combined.match(/\b((?:localhost|\d{1,3}(?:\.\d{1,3}){3}):\d+)\b/i);
+    const addrText = addrMatch ? ` at ${addrMatch[1]}` : '';
+    return `Dolt server is not reachable${addrText}. Start it with "bd dolt start" and click Refresh.`;
+  }
+  if (/schema version mismatch/i.test(combined)) {
+    return 'Beads database schema is out of date for this workspace. Run a bd command in that repository to migrate it.';
+  }
+  if (/no beads database found/i.test(combined)) {
+    return 'This workspace does not have an initialized Beads database.';
+  }
+  if ((record.code === 'ENOENT' && /^spawn\b/i.test(syscall)) || /\bspawn\b.*\benoent\b/i.test(rawMessage)) {
+    return 'Cannot find the Beads CLI executable (bd). Install bd or set BD_PATH.';
+  }
+  if (
+    record.killed === true ||
+    record.signal === 'SIGTERM' ||
+    record.code === 'ETIMEDOUT' ||
+    /\btimed out\b/i.test(combined)
+  ) {
+    return 'Beads CLI timed out on this workspace. Check the Dolt server status and click Refresh.';
+  }
+
+  const lines = combined
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !/^Command failed:/i.test(line));
+  const bestLine = lines.find((line) => /^Error:/i.test(line)) ?? lines[0] ?? 'Beads CLI command failed.';
+  return bestLine.replace(/^Error:\s*/i, '').trim() || 'Beads CLI command failed.';
+}
+
+/**
+ * Parse JSON stdout from bd CLI and ignore non-JSON warning lines before the payload.
+ */
+export function parseBdJsonOutput(raw: string): unknown {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === 'null') return [];
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return parsed === null ? [] : parsed;
+  } catch {
+    // Fall through to locate a JSON payload after leading warning lines.
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const candidate = lines.slice(i).join('\n').trim();
+    if (!candidate.startsWith('[') && !candidate.startsWith('{')) continue;
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      return parsed === null ? [] : parsed;
+    } catch {
+      // Try the next candidate line.
+    }
+  }
+
+  throw new Error('Beads CLI returned non-JSON output.');
+}
+
+/**
+ * Coalesce concurrent async work for the same key into one in-flight promise.
+ */
+export function coalesceInFlight<T>(
+  inFlight: Map<string, Promise<T>>,
+  key: string,
+  work: () => Promise<T>
+): Promise<T> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+  const pending = work().finally(() => {
+    if (inFlight.get(key) === pending) {
+      inFlight.delete(key);
+    }
+  });
+  inFlight.set(key, pending);
+  return pending;
+}
+
+const inFlightSnapshots = new Map<string, Promise<BeadSnapshot>>();
 
 /**
  * Validate that an issue ID is a safe Bead identifier and not a CLI subcommand or flag.
@@ -179,30 +305,33 @@ export async function loadBeadsSnapshot(options: SnapshotOptions = {}): Promise<
   }
 
   const cwd = await resolveDefaultWorkspace(options);
-  const bdExe = resolveBdExecutable();
-  const listRes = await execFileAsync(
-    bdExe,
-    ['list', '--all', '--include-gates', '--limit', '0', '--readonly', '--json'],
-    { cwd, ...BD_EXEC_OPTIONS }
-  );
+  const cacheKey = `${normalizeWorkspaceKey(cwd)}|${testEnv}`;
+  return coalesceInFlight(inFlightSnapshots, cacheKey, async () => {
+    const bdExe = resolveBdExecutable();
+    const listRes = await execFileAsync(
+      bdExe,
+      ['list', '--all', '--include-gates', '--limit', '0', '--readonly', '--json'],
+      { cwd, ...BD_EXEC_OPTIONS }
+    );
 
-  const parsedIssues = JSON.parse(listRes.stdout || '[]') as unknown;
-  const issues = Array.isArray(parsedIssues) ? (parsedIssues as BeadIssue[]) : [];
-  const blocked = deriveBlockedEntries(issues);
-  const stats = computeStatsFallback(issues, blocked);
-  const etag = createHash('sha256')
-    .update(listRes.stdout)
-    .digest('hex')
-    .slice(0, 16);
+    const parsedIssues = parseBdJsonOutput(listRes.stdout || '[]');
+    const issues = Array.isArray(parsedIssues) ? (parsedIssues as BeadIssue[]) : [];
+    const blocked = deriveBlockedEntries(issues);
+    const stats = computeStatsFallback(issues, blocked);
+    const etag = createHash('sha256')
+      .update(listRes.stdout)
+      .digest('hex')
+      .slice(0, 16);
 
-  return {
-    testEnv,
-    workspace: cwd,
-    issues,
-    blocked,
-    stats,
-    etag,
-  };
+    return {
+      testEnv,
+      workspace: cwd,
+      issues,
+      blocked,
+      stats,
+      etag,
+    };
+  });
 }
 
 /**
@@ -227,20 +356,21 @@ export async function loadIssueComments(
     cwd,
     ...BD_EXEC_OPTIONS,
   });
-  const parsed = JSON.parse(stdout || '[]') as unknown;
+  const parsed = parseBdJsonOutput(stdout || '[]');
   return Array.isArray(parsed) ? (parsed as BeadComment[]) : [];
 }
 
 async function resolveDefaultWorkspace(options: SnapshotOptions = {}): Promise<string> {
   if (options.cwd) return options.cwd;
-  if (existsSync(join(REPO_ROOT, '.beads'))) return REPO_ROOT;
-  if (existsSync(join(process.cwd(), '.beads'))) return process.cwd();
+  if (isBeadsWorkspaceDir(REPO_ROOT)) return REPO_ROOT;
+  if (isBeadsWorkspaceDir(process.cwd())) return process.cwd();
   const discovered = await listBeadsWorkspaces(options);
-  return discovered[0] ?? REPO_ROOT;
+  if (discovered[0]) return discovered[0];
+  throw new Error('No initialized Beads workspace found.');
 }
 
 /**
- * List local workspaces that contain a .beads directory.
+ * List local workspaces that contain a valid .beads directory.
  */
 export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promise<string[]> {
   const fixturePath = options.fixturePath ?? process.env.BEADS_FIXTURE_PATH ?? '';
@@ -249,17 +379,24 @@ export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promis
     return [snap.workspace];
   }
 
-  const found = new Set<string>();
+  const found = new Map<string, string>();
+  const addWorkspace = (dir: string) => {
+    const key = normalizeWorkspaceKey(dir);
+    if (!found.has(key)) {
+      found.set(key, dir);
+    }
+  };
+
   const envList = (process.env.BEADS_WORKSPACES || '')
     .split(delimiter)
     .map((entry) => entry.trim())
     .filter(Boolean);
   for (const dir of envList) {
-    if (existsSync(join(dir, '.beads'))) found.add(dir);
+    if (existsSync(join(dir, '.beads'))) addWorkspace(dir);
   }
 
   for (const directDir of [process.cwd(), REPO_ROOT]) {
-    if (existsSync(join(directDir, '.beads'))) found.add(directDir);
+    if (isBeadsWorkspaceDir(directDir)) addWorkspace(directDir);
   }
 
   const scanRoots = [
@@ -274,8 +411,8 @@ export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promis
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
         const candidate = join(root, entry.name);
-        if (existsSync(join(candidate, '.beads'))) {
-          found.add(candidate);
+        if (isBeadsWorkspaceDir(candidate)) {
+          addWorkspace(candidate);
         }
       }
     } catch {
@@ -283,7 +420,7 @@ export async function listBeadsWorkspaces(options: SnapshotOptions = {}): Promis
     }
   }
 
-  return found.size > 0 ? Array.from(found) : [REPO_ROOT];
+  return Array.from(found.values());
 }
 
 /**
@@ -295,7 +432,11 @@ export async function validateWorkspaceParam(
 ): Promise<string | undefined | null> {
   if (!workspaceParam) return undefined;
   const allowed = await listBeadsWorkspaces(options);
-  return allowed.includes(workspaceParam) ? workspaceParam : null;
+  const exact = allowed.find((entry) => entry === workspaceParam);
+  if (exact) return exact;
+  const targetKey = normalizeWorkspaceKey(workspaceParam);
+  const normalized = allowed.find((entry) => normalizeWorkspaceKey(entry) === targetKey);
+  return normalized ?? null;
 }
 
 /**
@@ -338,7 +479,7 @@ export function createStandaloneServer(): http.Server {
         res.end(JSON.stringify({ id, comments }));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
       }
       return;
     }
@@ -361,7 +502,7 @@ export function createStandaloneServer(): http.Server {
         res.end(JSON.stringify(snap));
       } catch (err) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: String(err) }));
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
       }
       return;
     }

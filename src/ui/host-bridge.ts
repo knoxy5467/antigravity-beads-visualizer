@@ -48,18 +48,48 @@ function isEmbeddedFrame(): boolean {
   }
 }
 
-function parseToolPayload<T>(result: {
+/**
+ * Parse a structured or JSON text MCP tool response and throw on tool errors.
+ */
+export function parseToolPayload<T>(result: {
+  isError?: boolean;
   structuredContent?: unknown;
   content?: Array<{ type: string; text?: string }>;
 }): T {
-  if (result.structuredContent !== undefined) {
+  const firstText = result.content?.find((item) => item.type === 'text')?.text?.trim();
+  if (result.isError) {
+    throw new Error(firstText || 'MCP tool returned an error.');
+  }
+  if (result.structuredContent !== undefined && result.structuredContent !== null) {
     return result.structuredContent as T;
   }
-  const firstText = result.content?.find((item) => item.type === 'text')?.text;
   if (firstText) {
-    return JSON.parse(firstText) as T;
+    try {
+      return JSON.parse(firstText) as T;
+    } catch {
+      throw new Error(firstText);
+    }
   }
-  return {} as T;
+  throw new Error('MCP tool returned an empty response.');
+}
+
+/**
+ * Extract an error message from a failed HTTP response body.
+ */
+export async function readHttpError(res: Response): Promise<string> {
+  const raw = (await res.text()).trim();
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { error?: unknown };
+      if (typeof parsed.error === 'string' && parsed.error.trim()) {
+        return parsed.error.trim();
+      }
+    } catch {
+      return raw;
+    }
+    return raw;
+  }
+  return `HTTP ${res.status}`;
 }
 
 function createEmbeddedMcpBridge(): HostBridge {
@@ -72,12 +102,18 @@ function createEmbeddedMcpBridge(): HostBridge {
         if (ctx.theme) applyDocumentTheme(ctx.theme);
         if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
       };
-      appPromise = app.connect().then(() => {
-        const ctx = app.getHostContext();
-        if (ctx?.theme) applyDocumentTheme(ctx.theme);
-        if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-        return app;
-      });
+      appPromise = app
+        .connect()
+        .then(() => {
+          const ctx = app.getHostContext();
+          if (ctx?.theme) applyDocumentTheme(ctx.theme);
+          if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+          return app;
+        })
+        .catch((err: unknown) => {
+          appPromise = null;
+          throw err;
+        });
     }
     return appPromise;
   }
@@ -169,7 +205,7 @@ export function createHostBridge(): HostBridge {
     async fetchWorkspaces(): Promise<string[]> {
       const res = await fetch('/api/workspaces');
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        throw new Error(await readHttpError(res));
       }
       const data = (await res.json()) as { workspaces?: string[] };
       return Array.isArray(data.workspaces) ? data.workspaces : [];
@@ -182,7 +218,7 @@ export function createHostBridge(): HostBridge {
       const query = params.toString();
       const res = await fetch(query ? `/api/snapshot?${query}` : '/api/snapshot');
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        throw new Error(await readHttpError(res));
       }
       return (await res.json()) as SnapshotResponse;
     },
@@ -192,7 +228,7 @@ export function createHostBridge(): HostBridge {
       if (workspace) params.set('workspace', workspace);
       const res = await fetch(`/api/issue?${params.toString()}`);
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
+        throw new Error(await readHttpError(res));
       }
       const data = (await res.json()) as { comments?: BeadComment[] };
       return Array.isArray(data.comments) ? data.comments : [];

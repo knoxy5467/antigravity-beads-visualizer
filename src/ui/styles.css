@@ -516,3 +516,13 @@ body {
   color: var(--bv-text-secondary);
   text-align: center;
 }
+
+.bv-load-error {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--bv-danger);
+  background: rgba(248, 81, 73, 0.12);
+  color: var(--bv-text-primary);
+  font-size: 12px;
+}
