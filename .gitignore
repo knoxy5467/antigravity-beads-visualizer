@@ -43,3 +43,5 @@ agent/project.db-shm
 agent/project.db.tmp
 agent/drivers/@local/scry/data/
 agent/drivers/@local/scry/runtime/
+
+.scry/data/project.db

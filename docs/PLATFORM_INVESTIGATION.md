@@ -27,7 +27,8 @@ I inspected the built-in Swarm plugin (`swarm/sidecars/swarm_board/`), the `plug
 
 - **Surface:** A sidecar opens only in the conversation side pane (`SIDECAR_UI_ENTRYPOINT_AUX_PANE`).
 - **Host UI APIs:** The browser page can call `window.sidecar.ui.toggleAuxPane` to open a workspace file and `window.sidecar.ui.toggleConversation` to jump to another conversation.
-- **Limits:** A sidecar cannot attach quote pills to the user prompt, cannot send messages to an agent, and cannot expose tools to the agent.
+- **Agent APIs:** A Node.js sidecar receives `ANTIGRAVITY_LS_ADDRESS`, `ANTIGRAVITY_CSRF_TOKEN`, and `ANTIGRAVITY_AGENTAPI_EXE` from the host and can start or message conversations through `sidecar_sdk` (`startConversation`, `sendMessage`, `getConversationMetadata`).
+- **Limits:** A sidecar cannot attach prompt quote pills (`updateModelContext`) or expose MCP tools directly to the model. Those capabilities belong to the MCP App surface (see ADR-0002).
 - **Assets:** A sidecar serves multi-file static assets from a local Node.js HTTP server (`SidecarApp`).
 
 ### MCP App Plugin (`ui://` Resource)
@@ -42,7 +43,7 @@ I inspected the built-in Swarm plugin (`swarm/sidecars/swarm_board/`), the `plug
 
 ## 2. Standalone Mode and Dolt Connectivity
 
-- **Server (`src/standalone/server.mjs`):** Serves static UI files and `/api/snapshot` over `127.0.0.1`.
+- **Server (`src/standalone/server.ts`):** Serves static UI files and `/api/snapshot` over `127.0.0.1`.
 - **Synthetic Test Mode:** When `BEADS_FIXTURE_PATH` is set, the server reads a synthetic JSON fixture without calling `bd` or touching local Dolt data.
 - **Live Mode:** When `BEADS_FIXTURE_PATH` is unset, the server runs read-only `bd list --json` against the workspace `.beads/` database (Dolt server mode on port `3307` or embedded Dolt).
 
@@ -56,5 +57,5 @@ I inspected the built-in Swarm plugin (`swarm/sidecars/swarm_board/`), the `plug
 ## 4. UI Authoring and Maintenance Strategy
 
 - **Safe DOM:** Render all text with `textContent` and `document.createElement` to block HTML injection.
-- **Modular Core:** Keep pure tree, depth, completion, and quote logic in `src/core/graph.mjs` for fast Node unit testing.
+- **Modular Core:** Keep pure tree, depth, completion, and quote logic in `src/core/graph.ts` for fast Node unit testing.
 - **Visual Verification:** Run Playwright against `BEADS_TEST_ENV=synthetic` to capture PII-free screenshots and `.webm` videos, then scan artifacts with `tools/pii_guard.py`.

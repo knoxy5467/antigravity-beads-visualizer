@@ -32,3 +32,4 @@ Sidecar UIs cannot attach prompt quote pills (`updateModelContext`) or send mess
 
 - Users can quote any epic, task, gate, or comment as a chat context pill and trigger agent messages.
 - All UI features remain 100% testable in headless Chromium with `playwright.config.ts` without restarting Antigravity.
+- **Update (ADR-0002):** `beads-visualizer` retains the MCP App for UI rendering and quote pills, and pairs it with a TypeScript Sidecar daemon (`sidecars/beads-gatekeeper/`) for Dolt supervision, gate maintenance, and hybrid agent dispatch.
