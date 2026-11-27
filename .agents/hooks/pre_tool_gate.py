@@ -19,6 +19,7 @@ from _common import (  # noqa: E402
     get_in_progress_beads,
     is_exempt_path,
     read_hook_input,
+    record_gate_hook_event,
     relative_repo_posix,
 )
 
@@ -121,7 +122,16 @@ def evaluate_pre_tool(payload: dict[str, Any], repo_root: Path = REPO_ROOT) -> d
 
 def main() -> int:
     """Read PreToolUse payload from stdin and emit decision JSON."""
-    emit_json(evaluate_pre_tool(read_hook_input(), REPO_ROOT))
+    res = evaluate_pre_tool(read_hook_input(), REPO_ROOT)
+    if res.get("decision") == "deny":
+        record_gate_hook_event(
+            hook_name="pre-tool-gate",
+            status="failed",
+            workspace_path=REPO_ROOT,
+            exit_code=1,
+            detail=str(res.get("reason", "")),
+        )
+    emit_json(res)
     return 0
 
 

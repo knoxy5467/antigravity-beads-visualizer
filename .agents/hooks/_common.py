@@ -210,3 +210,61 @@ def get_staged_files(cwd: Path = REPO_ROOT) -> list[str]:
     if proc.returncode != 0:
         return []
     return [ln.strip().replace("\\", "/") for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def resolve_sidecar_data_dir() -> Path:
+    """Resolve the persistent plugin data directory for the Beads Gatekeeper sidecar."""
+    override = os.environ.get("BEADS_PLUGIN_DATA") or os.environ.get("PLUGIN_DATA")
+    if override and override.strip():
+        return Path(override.strip()).resolve()
+    return Path.home() / ".gemini" / "antigravity" / "plugin_data" / "beads-visualizer"
+
+
+def record_gate_hook_event(
+    hook_name: str,
+    status: str,
+    workspace_path: str | Path,
+    gate_id: str | None = None,
+    bead_id: str | None = None,
+    exit_code: int | None = None,
+    detail: str = "",
+) -> None:
+    """Append one gate hook telemetry event to hook-events.jsonl."""
+    import uuid
+    from datetime import datetime, timezone
+
+    try:
+        data_dir = resolve_sidecar_data_dir()
+        data_dir.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {
+            "id": f"hk-{uuid.uuid4().hex[:10]}",
+            "hookName": hook_name,
+            "workspacePath": str(Path(workspace_path).resolve()),
+            "status": status,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        if gate_id:
+            payload["gateId"] = gate_id
+        if bead_id:
+            payload["beadId"] = bead_id
+        if exit_code is not None:
+            payload["exitCode"] = int(exit_code)
+        if detail:
+            payload["detail"] = detail[:500]
+        events_file = data_dir / "hook-events.jsonl"
+        with events_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+    except OSError:
+        return
+
+
+def read_sidecar_liveness() -> dict[str, Any]:
+    """Read sidecar daemonPid and updatedAt from state.json."""
+    state_file = resolve_sidecar_data_dir() / "state.json"
+    if not state_file.is_file():
+        return {}
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}

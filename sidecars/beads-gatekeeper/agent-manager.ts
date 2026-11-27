@@ -124,6 +124,7 @@ export interface HybridAgentManagerOptions {
   appDataDir?: string;
   stallThresholdMs?: number;
   nowFn?: () => number;
+  isPidAlive?: (pid: number) => boolean;
 }
 
 export interface SpawnManagedAgentInput extends AgentSpawnInput {
@@ -192,6 +193,21 @@ export class DesktopAgentAdapter {
       return "failed";
     }
     return "idle";
+  }
+
+  public async sendMessage(conversationId: string, prompt: string): Promise<void> {
+    if (this.sidecarSdk?.sendMessage) {
+      await this.sidecarSdk.sendMessage(conversationId, prompt);
+      return;
+    }
+    if (this.lsAddress) {
+      await this.postConversationRpc("SendUserCascadeMessage", {
+        conversationId,
+        items: [{ text: prompt }],
+      });
+      return;
+    }
+    throw new Error("Cannot send message: ANTIGRAVITY_LS_ADDRESS and sidecarSdk are unavailable.");
   }
 
   private async postConversationRpc<T>(method: string, body: Record<string, unknown>): Promise<T> {
@@ -372,6 +388,7 @@ export class HybridAgentManager {
   private readonly appDataDir?: string;
   private readonly stallThresholdMs: number;
   private readonly nowFn: () => number;
+  private readonly isPidAlive: (pid: number) => boolean;
   private readonly agents = new Map<string, ManagedAgentRecord>();
   private readonly pendingDone = new Map<string, Promise<unknown>>();
 
@@ -381,6 +398,39 @@ export class HybridAgentManager {
     this.appDataDir = options.appDataDir;
     this.stallThresholdMs = options.stallThresholdMs ?? DEFAULT_STALL_THRESHOLD_MS;
     this.nowFn = options.nowFn ?? Date.now;
+    this.isPidAlive =
+      options.isPidAlive ??
+      ((pid: number) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+  }
+
+  public hydrateAgents(records: ManagedAgentRecord[]): void {
+    const nowIso = new Date(this.nowFn()).toISOString();
+    for (const record of records) {
+      if (!record?.id) {
+        continue;
+      }
+      const copy: ManagedAgentRecord = { ...record };
+      if (
+        copy.runtime === "agy" &&
+        (copy.status === "running" || copy.status === "stalled") &&
+        (!copy.pid || !this.isPidAlive(copy.pid))
+      ) {
+        copy.status = "stopped";
+        copy.updatedAt = nowIso;
+      }
+      this.agents.set(copy.id, copy);
+    }
+  }
+
+  public async sendMessageToAgent(conversationId: string, prompt: string): Promise<void> {
+    await this.desktopAdapter.sendMessage(conversationId, prompt);
   }
 
   public async spawnAgent(input: SpawnManagedAgentInput): Promise<ManagedAgentRecord> {

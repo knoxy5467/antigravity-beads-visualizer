@@ -96,3 +96,34 @@ def test_get_in_progress_beads_uses_fresh_cache(tmp_path: Path) -> None:
     assert ok is True
     assert err == ""
     assert active[0]["id"] == "bv-cached-1"
+
+
+def test_record_gate_hook_event_and_session_liveness(tmp_path: Path, monkeypatch) -> None:
+    """Verify hook event telemetry writes hook-events.jsonl and session_start reads liveness."""
+    import json
+
+    from _common import read_sidecar_liveness, record_gate_hook_event
+
+    monkeypatch.setenv("BEADS_PLUGIN_DATA", str(tmp_path))
+    record_gate_hook_event(
+        hook_name="pre-push",
+        status="failed",
+        workspace_path=str(tmp_path),
+        gate_id="bv-gate-ci",
+        exit_code=1,
+        detail="CI check failed.",
+    )
+    events_file = tmp_path / "hook-events.jsonl"
+    assert events_file.is_file()
+    lines = [json.loads(line) for line in events_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 1
+    assert lines[0]["hookName"] == "pre-push"
+    assert lines[0]["status"] == "failed"
+    assert lines[0]["gateId"] == "bv-gate-ci"
+
+    (tmp_path / "state.json").write_text(
+        json.dumps({"updatedAt": "2026-11-27T00:00:00Z", "daemonPid": 9876}),
+        encoding="utf-8",
+    )
+    liveness = read_sidecar_liveness()
+    assert liveness["daemonPid"] == 9876

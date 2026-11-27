@@ -19,6 +19,7 @@ from _common import (  # noqa: E402
     get_ready_count,
     has_beads_workspace,
     read_hook_input,
+    read_sidecar_liveness,
     run_bd,
 )
 
@@ -66,11 +67,14 @@ def build_session_message(repo_root: Path = REPO_ROOT) -> str:
         else "Beads: Dolt unreachable (start dolt sql-server on port 3307)."
     )
     dolt_txt = f"Dolt: 127.0.0.1:3307 ({'ok' if _dolt_reachable() else 'down'})."
+    liveness = read_sidecar_liveness()
+    daemon_pid = liveness.get("daemonPid")
+    sidecar_txt = f"Sidecar: active (pid={daemon_pid})." if daemon_pid else "Sidecar: idle."
     scry_txt = "Scry: ready." if (repo_root / "agent" / "drivers").exists() else "Scry: run scry init."
 
     prime_file = repo_root / ".beads" / "PRIME.md"
     prime_txt = prime_file.read_text(encoding="utf-8").strip() if prime_file.is_file() else ""
-    status = f"Status: {beads_txt} {dolt_txt} {scry_txt}"
+    status = f"Status: {beads_txt} {dolt_txt} {sidecar_txt} {scry_txt}"
     return f"{prime_txt}\n{status}".strip()
 
 

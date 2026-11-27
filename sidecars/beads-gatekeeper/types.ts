@@ -19,6 +19,8 @@ export interface OptInWorkspaceConfig {
   workspacePath: string;
   autoStartDolt: boolean;
   autoCheckGates: boolean;
+  autoDriveWorkflows?: boolean;
+  defaultWorkflowRuntime?: ManagedAgentRuntime;
   pollIntervalMs: number;
   maxConcurrentWorkers: number;
 }
@@ -42,6 +44,50 @@ export interface DoltHealthState {
   lastError?: string;
 }
 
+export type GateHookStatus = 'started' | 'passed' | 'failed' | 'timed_out';
+
+export interface GateHookEvent {
+  id: string;
+  hookName: string;
+  workspacePath: string;
+  gateId?: string;
+  beadId?: string;
+  status: GateHookStatus;
+  exitCode?: number;
+  detail?: string;
+  timestamp: string;
+}
+
+export interface MonitoredGateRecord {
+  workspacePath: string;
+  gateId: string;
+  title?: string;
+  awaitType?: string;
+  status: 'monitoring' | 'resolved' | 'escalated';
+  waiters: string[];
+  lastCheckedAt: string;
+  rehydrated?: boolean;
+}
+
+export type WorkflowTrigger =
+  | 'ready_work'
+  | 'gate_resolved'
+  | 'gate_hook_failed'
+  | 'manual_epic';
+
+export interface WorkflowDispatchRecord {
+  id: string;
+  workspacePath: string;
+  beadId: string;
+  trigger: WorkflowTrigger;
+  runtime: ManagedAgentRuntime;
+  conversationId?: string;
+  pid?: number;
+  status: 'dispatched' | 'completed' | 'failed';
+  createdAt: string;
+  detail?: string;
+}
+
 export interface GateMonitorState {
   workspacePath: string;
   lastRunAt: string;
@@ -49,6 +95,8 @@ export interface GateMonitorState {
   resolvedGates: string[];
   escalatedGates: string[];
   readyMolecules: string[];
+  monitoredGates?: MonitoredGateRecord[];
+  failedHooks?: GateHookEvent[];
   lastError?: string;
 }
 
@@ -78,9 +126,14 @@ export interface ManagedAgentRecord {
 export interface SidecarStateSnapshot {
   updatedAt: string;
   daemonPid?: number;
+  restartedAt?: string;
   doltStates: DoltHealthState[];
   gateStates: GateMonitorState[];
   agents: ManagedAgentRecord[];
+  monitoredGates?: MonitoredGateRecord[];
+  hookEvents?: GateHookEvent[];
+  workflowRuns?: WorkflowDispatchRecord[];
+  notifiedKeys?: string[];
 }
 
 export type SidecarCommand =
@@ -97,5 +150,13 @@ export type SidecarCommand =
       beadId: string;
       runtime: ManagedAgentRuntime;
       prompt: string;
+      requestedAt: string;
+    }
+  | {
+      type: 'drive_epic';
+      workspacePath: string;
+      epicId: string;
+      runtime: ManagedAgentRuntime;
+      prompt?: string;
       requestedAt: string;
     };
