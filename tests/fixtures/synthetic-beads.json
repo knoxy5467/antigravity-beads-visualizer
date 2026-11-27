@@ -146,6 +146,7 @@
   "sidecar": {
     "updatedAt": "2026-11-26T12:00:00Z",
     "daemonPid": 4242,
+    "restartedAt": "2026-11-26T11:45:00Z",
     "doltStates": [
       {
         "workspacePath": "/synthetic/workspace/beads-demo",
@@ -163,6 +164,41 @@
         "resolvedGates": ["bv-gate-resolved-demo"],
         "escalatedGates": ["bv-task-gate-check"],
         "readyMolecules": ["bv-task-ready-polish"]
+      }
+    ],
+    "monitoredGates": [
+      {
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "gateId": "bv-task-gate-check",
+        "title": "Gate: Synthetic PR CI Approval",
+        "awaitType": "gh:run",
+        "status": "monitoring",
+        "waiters": ["conv-syn-1"],
+        "lastCheckedAt": "2026-11-26T12:00:00Z",
+        "rehydrated": true
+      }
+    ],
+    "hookEvents": [
+      {
+        "id": "hk-syn-1",
+        "hookName": "pre-push",
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "gateId": "bv-task-gate-check",
+        "status": "passed",
+        "exitCode": 0,
+        "timestamp": "2026-11-26T11:59:00Z"
+      }
+    ],
+    "workflowRuns": [
+      {
+        "id": "wf-syn-1",
+        "workspacePath": "/synthetic/workspace/beads-demo",
+        "beadId": "bv-meta-demo",
+        "trigger": "manual_epic",
+        "runtime": "desktop",
+        "conversationId": "conv-syn-1",
+        "status": "dispatched",
+        "createdAt": "2026-11-26T11:55:00Z"
       }
     ],
     "agents": [

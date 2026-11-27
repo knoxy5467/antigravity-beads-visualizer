@@ -429,7 +429,8 @@ body {
   align-items: center;
 }
 
-.bv-sidecar-agents {
+.bv-sidecar-agents,
+.bv-sidecar-subsection {
   display: flex;
   flex-direction: column;
   gap: 4px;

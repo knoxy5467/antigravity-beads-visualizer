@@ -577,6 +577,47 @@ export function createStandaloneServer(): http.Server {
       return;
     }
 
+    if (urlPath === '/api/sidecar/drive-epic' && req.method === 'POST') {
+      try {
+        const body = await readJsonBody(req);
+        const epicId = typeof body.epicId === 'string' ? body.epicId.trim() : '';
+        const runtime =
+          body.runtime === 'desktop' || body.runtime === 'agy'
+            ? (body.runtime as ManagedAgentRuntime)
+            : null;
+        const prompt = typeof body.prompt === 'string' ? body.prompt.trim() : '';
+        if (!isValidBeadId(epicId) || !runtime) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Valid epicId and runtime are required.' }));
+          return;
+        }
+        const workspace = await validateWorkspaceParam(
+          typeof body.workspace === 'string' ? body.workspace : null
+        );
+        if (workspace === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
+          return;
+        }
+        if (!process.env.BEADS_FIXTURE_PATH) {
+          await new SidecarStateStore(resolvePluginDataDir()).appendCommand({
+            type: 'drive_epic',
+            workspacePath: workspace ?? process.cwd(),
+            epicId,
+            runtime,
+            prompt: prompt || undefined,
+            requestedAt: new Date().toISOString(),
+          });
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, queued: true, epicId, runtime, workspace: workspace ?? null }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
+      }
+      return;
+    }
+
     if (urlPath === '/api/workspaces') {
       try {
         const workspaces = await listBeadsWorkspaces();

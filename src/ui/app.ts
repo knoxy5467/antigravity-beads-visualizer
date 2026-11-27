@@ -220,7 +220,8 @@ function renderAllViews(): void {
       (issue) => void handleAgentMessage(issue, 'current'),
       currentSidecarState,
       (issue) => void handleResolveGate(issue),
-      (beadId, runtime, prompt) => void handleSpawnAgent(beadId, runtime, prompt)
+      (beadId, runtime, prompt) => void handleSpawnAgent(beadId, runtime, prompt),
+      (epicId, runtime, prompt) => void handleDriveEpic(epicId, runtime, prompt)
     );
   }
 }
@@ -248,6 +249,19 @@ async function handleSpawnAgent(
     setActionStatus(status);
   } catch (err) {
     setActionStatus(`Spawn worker failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+async function handleDriveEpic(
+  epicId: string,
+  runtime: ManagedAgentRuntime,
+  prompt: string
+): Promise<void> {
+  try {
+    const status = await bridge.driveEpic(epicId, runtime, prompt, selectedWorkspace || undefined);
+    setActionStatus(status);
+  } catch (err) {
+    setActionStatus(`Drive epic failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

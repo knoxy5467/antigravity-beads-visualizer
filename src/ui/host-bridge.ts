@@ -45,6 +45,12 @@ export interface HostBridge {
     prompt: string,
     workspace?: string
   ): Promise<string>;
+  driveEpic(
+    epicId: string,
+    runtime: ManagedAgentRuntime,
+    prompt?: string,
+    workspace?: string
+  ): Promise<string>;
   quoteBead(issue: BeadIssue): Promise<string>;
   sendAgentMessage(text: string, target?: 'current' | 'new'): Promise<string>;
 }
@@ -204,6 +210,24 @@ function createEmbeddedMcpBridge(): HostBridge {
       return `Queued ${runtime} worker for ${beadId}.`;
     },
 
+    async driveEpic(
+      epicId: string,
+      runtime: ManagedAgentRuntime,
+      prompt?: string,
+      workspace?: string
+    ): Promise<string> {
+      const app = await getApp();
+      const args: Record<string, unknown> = { epicId, runtime };
+      if (prompt) args.prompt = prompt;
+      if (workspace) args.workspace = workspace;
+      const result = await app.callServerTool({
+        name: 'beads_drive_epic',
+        arguments: args,
+      });
+      parseToolPayload<{ ok?: boolean }>(result);
+      return `Queued epic workflow conversation for ${epicId}.`;
+    },
+
     async quoteBead(issue: BeadIssue): Promise<string> {
       const payload = formatQuotePayload(issue);
       const app = await getApp();
@@ -316,6 +340,23 @@ export function createHostBridge(): HostBridge {
         throw new Error(await readHttpError(res));
       }
       return `Queued ${runtime} worker for ${beadId}.`;
+    },
+
+    async driveEpic(
+      epicId: string,
+      runtime: ManagedAgentRuntime,
+      prompt?: string,
+      workspace?: string
+    ): Promise<string> {
+      const res = await fetch('/api/sidecar/drive-epic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ epicId, runtime, prompt, workspace }),
+      });
+      if (!res.ok) {
+        throw new Error(await readHttpError(res));
+      }
+      return `Queued epic workflow conversation for ${epicId}.`;
     },
 
     async quoteBead(issue: BeadIssue): Promise<string> {
