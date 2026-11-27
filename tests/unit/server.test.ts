@@ -328,3 +328,25 @@ test('coalesceInFlight shares one concurrent promise per workspace key and clear
   assert.equal(r3, 'run-2');
   assert.equal(calls, 2);
 });
+
+test('createStandaloneServer returns JSON 500 when workspace discovery fails', async () => {
+  const prevFixture = process.env.BEADS_FIXTURE_PATH;
+  process.env.BEADS_FIXTURE_PATH = 'tests/fixtures/does-not-exist-synthetic.json';
+  const server = createStandaloneServer();
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const port = (server.address() as AddressInfo).port;
+    const base = `http://127.0.0.1:${port}`;
+
+    for (const path of ['/api/workspaces', '/api/snapshot?workspace=/synthetic/ws', '/api/issue?id=bv-1&workspace=/synthetic/ws']) {
+      const res = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(3000) });
+      assert.equal(res.status, 500, `Expected 500 for ${path}`);
+      const payload = (await res.json()) as { error?: string };
+      assert.ok(payload.error && payload.error.length > 0, `Expected JSON error for ${path}`);
+    }
+  } finally {
+    if (prevFixture === undefined) delete process.env.BEADS_FIXTURE_PATH;
+    else process.env.BEADS_FIXTURE_PATH = prevFixture;
+    server.close();
+  }
+});

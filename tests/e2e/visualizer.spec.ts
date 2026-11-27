@@ -260,4 +260,83 @@ test.describe('Beads Visualizer 4-Tab Prototype', () => {
     expect(totalRequests).toBeGreaterThanOrEqual(2);
     expect(maxConcurrent).toBe(1);
   });
+
+  test('ignores late issue comment responses after workspace switch without page errors', async ({ page }) => {
+    const wsOk = '/synthetic/workspace/beads-demo';
+    const wsBroken = '/synthetic/workspace/schema-old';
+    const pageErrors: string[] = [];
+    page.on('pageerror', (err) => pageErrors.push(err.message));
+
+    let releaseComments!: () => void;
+    const commentsGate = new Promise<void>((resolve) => {
+      releaseComments = resolve;
+    });
+
+    await page.route('**/api/workspaces', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ workspaces: [wsOk, wsBroken] }),
+      });
+    });
+
+    await page.route('**/api/snapshot*', async (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get('workspace') === wsBroken) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Beads database schema is out of date for this workspace.' }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.route('**/api/issue*', async (route) => {
+      await commentsGate;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ id: 'bv-task-gate-check', comments: [{ author: 'tester', text: 'Late comment' }] }),
+      });
+    });
+
+    await page.goto('/');
+    await page.getByTestId('auto-poll-toggle').uncheck();
+    await expect(page.getByTestId('tree-node-bv-task-gate-check')).toBeVisible();
+
+    await page.getByTestId('tree-node-bv-task-gate-check').click();
+    await page.getByTestId('bv-workspace-select').selectOption(wsBroken);
+    await expect(page.getByTestId('bv-load-error')).toContainText('schema is out of date');
+
+    releaseComments();
+    await page.waitForTimeout(300);
+
+    expect(pageErrors).toEqual([]);
+    await expect(page.getByTestId('bv-inspector')).toContainText('Select an epic or task to inspect details.');
+    await expect(page.getByTestId('bv-quote-btn')).toBeDisabled();
+  });
+
+  test('clears transient snapshot poll error when the next unchanged poll succeeds', async ({ page }) => {
+    let callCount = 0;
+    await page.route('**/api/snapshot*', async (route) => {
+      callCount += 1;
+      if (callCount === 2) {
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Transient Dolt timeout.' }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+
+    await page.goto('/');
+    await expect(page.getByTestId('tree-node-bv-meta-demo')).toBeVisible();
+
+    await expect(page.getByTestId('bv-action-status')).toContainText('Transient Dolt timeout.', { timeout: 8000 });
+    await expect(page.getByTestId('bv-action-status')).toHaveText('', { timeout: 8000 });
+  });
 });

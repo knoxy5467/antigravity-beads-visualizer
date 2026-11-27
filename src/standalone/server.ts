@@ -454,9 +454,14 @@ export function createStandaloneServer(): http.Server {
     }
 
     if (urlPath === '/api/workspaces') {
-      const workspaces = await listBeadsWorkspaces();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ workspaces }));
+      try {
+        const workspaces = await listBeadsWorkspaces();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ workspaces }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: formatBdCommandError(err) }));
+      }
       return;
     }
 
@@ -467,13 +472,13 @@ export function createStandaloneServer(): http.Server {
         res.end(JSON.stringify({ error: 'Invalid or missing id parameter' }));
         return;
       }
-      const workspace = await validateWorkspaceParam(reqUrl.searchParams.get('workspace'));
-      if (workspace === null) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
-        return;
-      }
       try {
+        const workspace = await validateWorkspaceParam(reqUrl.searchParams.get('workspace'));
+        if (workspace === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
+          return;
+        }
         const comments = await loadIssueComments(id, { cwd: workspace });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ id, comments }));
@@ -486,13 +491,13 @@ export function createStandaloneServer(): http.Server {
 
     if (urlPath === '/api/snapshot') {
       const clientEtag = reqUrl.searchParams.get('etag') || '';
-      const workspace = await validateWorkspaceParam(reqUrl.searchParams.get('workspace'));
-      if (workspace === null) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
-        return;
-      }
       try {
+        const workspace = await validateWorkspaceParam(reqUrl.searchParams.get('workspace'));
+        if (workspace === null) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Workspace is not in allowed Beads workspaces' }));
+          return;
+        }
         const snap = await loadBeadsSnapshot({ cwd: workspace });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         if (clientEtag && clientEtag === snap.etag) {
